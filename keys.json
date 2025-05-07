@@ -1,20 +1,11 @@
-[
-  {
-    "key": "demo123",
-    "plan": "7d",
-    "createdAt": "2025-05-07T10:00:00Z",
-    "status": "active"
-  },
-  {
-    "key": "premium15",
-    "plan": "15d",
-    "createdAt": "2025-05-07T10:00:00Z",
-    "status": "active"
-  },
-  {
-    "key": "vip30",
-    "plan": "30d",
-    "createdAt": "2025-05-07T10:00:00Z",
-    "status": "active"
-  }
-]
+{
+  "keys": [
+    {
+      "key": "demo123",
+      "plan": "7d",
+      "createdAt": 1714956000000,
+      "expireAt": 1715560800000,
+      "status": "active"
+    }
+  ]
+}
