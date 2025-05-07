@@ -2,281 +2,225 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
-const jwt = require('jsonwebtoken');
-const bodyParser = require('body-parser');
-
+const crypto = require('crypto');
 const app = express();
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'ac-mines-hack-secret-key-2025';
 
 // Middleware
 app.use(cors());
-app.use(bodyParser.json());
+app.use(express.json());
+app.use(express.static('public'));
 
-// Helper functions
-const readKeysFile = () => {
-  try {
-    const data = fs.readFileSync(path.join(__dirname, 'keys.json'), 'utf8');
-    return JSON.parse(data);
-  } catch (error) {
-    console.error('Error reading keys file:', error);
-    return [];
-  }
-};
+// Utilitários
+const KEYS_FILE = path.join(__dirname, 'keys.json');
 
-const writeKeysFile = (keys) => {
-  try {
-    fs.writeFileSync(
-      path.join(__dirname, 'keys.json'),
-      JSON.stringify(keys, null, 2),
-      'utf8'
-    );
-    return true;
-  } catch (error) {
-    console.error('Error writing keys file:', error);
-    return false;
-  }
-};
-
-const calculateTimeRemaining = (key) => {
-  const createdAt = new Date(key.createdAt);
-  let daysToAdd = 0;
-  
-  if (key.plan === '7d') daysToAdd = 7;
-  else if (key.plan === '15d') daysToAdd = 15;
-  else if (key.plan === '30d') daysToAdd = 30;
-  
-  const expirationDate = new Date(createdAt);
-  expirationDate.setDate(expirationDate.getDate() + daysToAdd);
-  
-  const now = new Date();
-  const timeRemaining = expirationDate - now;
-  
-  return Math.max(0, Math.floor(timeRemaining / 1000)); // Return seconds remaining
-};
-
-const verifyToken = (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1];
-
-  if (!token) {
-    return res.status(401).json({ message: 'Authentication required' });
-  }
-
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
-    next();
-  } catch (error) {
-    return res.status(401).json({ message: 'Invalid token' });
-  }
-};
-
-// Initialize keys.json if it doesn't exist
-if (!fs.existsSync(path.join(__dirname, 'keys.json'))) {
-  writeKeysFile([
-    {
-      key: "demo123",
-      plan: "7d",
-      createdAt: new Date().toISOString(),
-      status: "active"
-    }
-  ]);
+// Garante que o arquivo de chaves existe
+if (!fs.existsSync(KEYS_FILE)) {
+  fs.writeFileSync(KEYS_FILE, JSON.stringify({ keys: [] }));
 }
 
-// Routes
+// Carregar chaves
+function loadKeys() {
+  try {
+    const data = fs.readFileSync(KEYS_FILE, 'utf8');
+    return JSON.parse(data);
+  } catch (error) {
+    console.error('Erro ao carregar chaves:', error);
+    return { keys: [] };
+  }
+}
+
+// Salvar chaves
+function saveKeys(data) {
+  try {
+    fs.writeFileSync(KEYS_FILE, JSON.stringify(data, null, 2));
+    return true;
+  } catch (error) {
+    console.error('Erro ao salvar chaves:', error);
+    return false;
+  }
+}
+
+// Converter dias para milissegundos
+function daysToMs(days) {
+  return days * 24 * 60 * 60 * 1000;
+}
+
+// Gerar uma nova chave
+function generateKey(plan) {
+  const key = crypto.randomBytes(6).toString('hex');
+  const now = Date.now();
+  let expireAt;
+  
+  switch (plan) {
+    case '7d':
+      expireAt = now + daysToMs(7);
+      break;
+    case '15d':
+      expireAt = now + daysToMs(15);
+      break;
+    case '30d':
+      expireAt = now + daysToMs(30);
+      break;
+    default:
+      expireAt = now + daysToMs(7);
+  }
+  
+  return {
+    key,
+    plan,
+    createdAt: now,
+    expireAt,
+    status: 'active'
+  };
+}
+
+// Rotas
 app.post('/auth', (req, res) => {
   const { key } = req.body;
   
   if (!key) {
-    return res.status(400).json({ message: 'Key is required' });
+    return res.status(400).json({ error: 'Chave não fornecida' });
   }
   
-  const keys = readKeysFile();
-  const foundKey = keys.find(k => k.key === key);
+  const data = loadKeys();
+  const keyData = data.keys.find(k => k.key === key);
   
-  if (!foundKey) {
-    return res.status(404).json({ message: 'Invalid key', status: 'invalid' });
+  if (!keyData) {
+    return res.status(404).json({ status: 'invalid', message: 'Chave inválida' });
   }
   
-  if (foundKey.status !== 'active') {
-    return res.status(403).json({ message: 'Key is blocked', status: 'blocked' });
+  const now = Date.now();
+  
+  if (keyData.status === 'blocked') {
+    return res.json({ status: 'blocked', message: 'Esta chave foi bloqueada' });
   }
   
-  const timeRemaining = calculateTimeRemaining(foundKey);
-  
-  if (timeRemaining <= 0) {
-    foundKey.status = 'expired';
-    writeKeysFile(keys);
-    return res.status(403).json({ message: 'Key has expired', status: 'expired' });
+  if (now > keyData.expireAt) {
+    return res.json({ status: 'expired', message: 'Chave expirada' });
   }
   
-  // Generate JWT token
-  const token = jwt.sign(
-    { key: foundKey.key, plan: foundKey.plan },
-    JWT_SECRET,
-    { expiresIn: timeRemaining + 's' }
-  );
+  const tempoRestante = keyData.expireAt - now;
   
-  res.json({
+  return res.json({
     status: 'valid',
-    plan: foundKey.plan,
-    timeRemaining,
-    token
+    plano: keyData.plan,
+    tempoRestante,
+    message: 'Autenticação bem-sucedida'
   });
 });
 
-app.post('/generate', verifyToken, (req, res) => {
-  // Simulate mines game probabilities
-  const board = [];
-  const rows = 5;
-  const cols = 5;
+app.post('/generate', (req, res) => {
+  // Gera uma casa segura aleatória (1-25)
+  const casaSegura = Math.floor(Math.random() * 25) + 1;
   
-  // Random safe position
-  const safeRow = Math.floor(Math.random() * rows);
-  const safeCol = Math.floor(Math.random() * cols);
-  
-  for (let i = 0; i < rows; i++) {
-    const row = [];
-    for (let j = 0; j < cols; j++) {
-      // Each cell has either high or low probability of being safe
-      let probability;
-      
-      if (i === safeRow && j === safeCol) {
-        // Safe cell with high probability
-        probability = Math.floor(80 + Math.random() * 20); // 80-99%
-      } else {
-        // Other cells with varying probabilities
-        probability = Math.floor(5 + Math.random() * 70); // 5-75%
-      }
-      
-      row.push(probability);
+  // Gera probabilidades para todas as 25 casas
+  const tabuleiro = Array(25).fill().map((_, index) => {
+    const numero = index + 1;
+    let probabilidade;
+    
+    if (numero === casaSegura) {
+      probabilidade = Math.floor(Math.random() * 21) + 80; // 80-100%
+    } else {
+      probabilidade = Math.floor(Math.random() * 41) + 10; // 10-50%
     }
-    board.push(row);
-  }
+    
+    return {
+      numero,
+      probabilidade,
+      seguro: numero === casaSegura
+    };
+  });
   
   res.json({
-    board,
-    safePosition: { row: safeRow, col: safeCol }
+    casaSegura,
+    tabuleiro
   });
 });
 
-// Admin authentication (simple password for demo)
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
-
-app.post('/admin/login', (req, res) => {
-  const { password } = req.body;
+// API para o bot Telegram
+app.post('/api/keys/create', (req, res) => {
+  const { plan, adminKey } = req.body;
   
-  if (password !== ADMIN_PASSWORD) {
-    return res.status(401).json({ message: 'Invalid admin password' });
+  // Em um sistema real, verificaríamos uma chave de API aqui
+  if (adminKey !== process.env.ADMIN_KEY && adminKey !== 'ac-mines-admin-key') {
+    return res.status(401).json({ error: 'Não autorizado' });
   }
   
-  const adminToken = jwt.sign({ role: 'admin' }, JWT_SECRET, { expiresIn: '24h' });
-  res.json({ token: adminToken });
+  if (!['7d', '15d', '30d'].includes(plan)) {
+    return res.status(400).json({ error: 'Plano inválido' });
+  }
+  
+  const data = loadKeys();
+  const newKey = generateKey(plan);
+  
+  data.keys.push(newKey);
+  
+  if (saveKeys(data)) {
+    res.json({ success: true, key: newKey });
+  } else {
+    res.status(500).json({ error: 'Erro ao salvar a chave' });
+  }
 });
 
-const verifyAdminToken = (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1];
-
-  if (!token) {
-    return res.status(401).json({ message: 'Admin authentication required' });
+app.post('/api/keys/list', (req, res) => {
+  const { adminKey } = req.body;
+  
+  if (adminKey !== process.env.ADMIN_KEY && adminKey !== 'ac-mines-admin-key') {
+    return res.status(401).json({ error: 'Não autorizado' });
   }
-
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    if (decoded.role !== 'admin') {
-      return res.status(403).json({ message: 'Admin access required' });
-    }
-    req.admin = decoded;
-    next();
-  } catch (error) {
-    return res.status(401).json({ message: 'Invalid admin token' });
-  }
-};
-
-app.get('/admin/keys', verifyAdminToken, (req, res) => {
-  const keys = readKeysFile();
-  res.json({ keys });
+  
+  const data = loadKeys();
+  res.json({ keys: data.keys });
 });
 
-app.post('/admin/keys/create', verifyAdminToken, (req, res) => {
-  const { plan } = req.body;
+app.post('/api/keys/block', (req, res) => {
+  const { key, adminKey } = req.body;
   
-  if (!plan || !['7d', '15d', '30d'].includes(plan)) {
-    return res.status(400).json({ message: 'Valid plan (7d, 15d, or 30d) is required' });
+  if (adminKey !== process.env.ADMIN_KEY && adminKey !== 'ac-mines-admin-key') {
+    return res.status(401).json({ error: 'Não autorizado' });
   }
   
-  const keys = readKeysFile();
-  
-  // Generate random key
-  const generateKey = () => {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    let result = '';
-    for (let i = 0; i < 8; i++) {
-      result += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return result;
-  };
-  
-  let newKey = generateKey();
-  
-  // Make sure key is unique
-  while (keys.some(k => k.key === newKey)) {
-    newKey = generateKey();
-  }
-  
-  const keyData = {
-    key: newKey,
-    plan,
-    createdAt: new Date().toISOString(),
-    status: 'active'
-  };
-  
-  keys.push(keyData);
-  writeKeysFile(keys);
-  
-  res.json({ message: 'Key created successfully', key: keyData });
-});
-
-app.post('/admin/keys/update', verifyAdminToken, (req, res) => {
-  const { key, status } = req.body;
-  
-  if (!key || !status || !['active', 'blocked'].includes(status)) {
-    return res.status(400).json({ message: 'Valid key and status (active or blocked) are required' });
-  }
-  
-  const keys = readKeysFile();
-  const keyIndex = keys.findIndex(k => k.key === key);
+  const data = loadKeys();
+  const keyIndex = data.keys.findIndex(k => k.key === key);
   
   if (keyIndex === -1) {
-    return res.status(404).json({ message: 'Key not found' });
+    return res.status(404).json({ error: 'Chave não encontrada' });
   }
   
-  keys[keyIndex].status = status;
-  writeKeysFile(keys);
+  data.keys[keyIndex].status = 'blocked';
   
-  res.json({ message: 'Key updated successfully', key: keys[keyIndex] });
+  if (saveKeys(data)) {
+    res.json({ success: true });
+  } else {
+    res.status(500).json({ error: 'Erro ao bloquear a chave' });
+  }
 });
 
-app.post('/admin/keys/delete', verifyAdminToken, (req, res) => {
-  const { key } = req.body;
+app.post('/api/keys/delete', (req, res) => {
+  const { key, adminKey } = req.body;
   
-  if (!key) {
-    return res.status(400).json({ message: 'Key is required' });
+  if (adminKey !== process.env.ADMIN_KEY && adminKey !== 'ac-mines-admin-key') {
+    return res.status(401).json({ error: 'Não autorizado' });
   }
   
-  const keys = readKeysFile();
-  const filteredKeys = keys.filter(k => k.key !== key);
+  const data = loadKeys();
+  const keyIndex = data.keys.findIndex(k => k.key === key);
   
-  if (filteredKeys.length === keys.length) {
-    return res.status(404).json({ message: 'Key not found' });
+  if (keyIndex === -1) {
+    return res.status(404).json({ error: 'Chave não encontrada' });
   }
   
-  writeKeysFile(filteredKeys);
+  data.keys.splice(keyIndex, 1);
   
-  res.json({ message: 'Key deleted successfully' });
+  if (saveKeys(data)) {
+    res.json({ success: true });
+  } else {
+    res.status(500).json({ error: 'Erro ao deletar a chave' });
+  }
 });
 
-// Start the server
+// Iniciar servidor
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`Servidor rodando na porta ${PORT}`);
 });
