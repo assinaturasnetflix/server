@@ -1,226 +1,178 @@
 const express = require('express');
-const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
+const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use(express.static('public'));
+app.use(express.static(path.join(__dirname, 'public')));
 
-// Utilitários
+// Caminho do arquivo de chaves
 const KEYS_FILE = path.join(__dirname, 'keys.json');
 
-// Garante que o arquivo de chaves existe
-if (!fs.existsSync(KEYS_FILE)) {
-  fs.writeFileSync(KEYS_FILE, JSON.stringify({ keys: [] }));
+// Garantir que o arquivo keys.json existe
+function ensureKeysFile() {
+    if (!fs.existsSync(KEYS_FILE)) {
+        fs.writeFileSync(KEYS_FILE, JSON.stringify({ keys: [] }));
+    }
 }
 
-// Carregar chaves
+// Carregar chaves do arquivo
 function loadKeys() {
-  try {
+    ensureKeysFile();
     const data = fs.readFileSync(KEYS_FILE, 'utf8');
     return JSON.parse(data);
-  } catch (error) {
-    console.error('Erro ao carregar chaves:', error);
-    return { keys: [] };
-  }
 }
 
-// Salvar chaves
+// Salvar chaves no arquivo
 function saveKeys(data) {
-  try {
     fs.writeFileSync(KEYS_FILE, JSON.stringify(data, null, 2));
-    return true;
-  } catch (error) {
-    console.error('Erro ao salvar chaves:', error);
-    return false;
-  }
 }
 
-// Converter dias para milissegundos
-function daysToMs(days) {
-  return days * 24 * 60 * 60 * 1000;
+// Gerar string aleatória para chaves
+function generateRandomString(length = 10) {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    let result = '';
+    for (let i = 0; i < length; i++) {
+        result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
 }
 
-// Gerar uma nova chave
-function generateKey(plan) {
-  const key = crypto.randomBytes(6).toString('hex');
-  const now = Date.now();
-  let expireAt;
-  
-  switch (plan) {
-    case '7d':
-      expireAt = now + daysToMs(7);
-      break;
-    case '15d':
-      expireAt = now + daysToMs(15);
-      break;
-    case '30d':
-      expireAt = now + daysToMs(30);
-      break;
-    default:
-      expireAt = now + daysToMs(7);
-  }
-  
-  return {
-    key,
-    plan,
-    createdAt: now,
-    expireAt,
-    status: 'active'
-  };
-}
-
-// Rotas
-app.post('/auth', (req, res) => {
-  const { key } = req.body;
-  
-  if (!key) {
-    return res.status(400).json({ error: 'Chave não fornecida' });
-  }
-  
-  const data = loadKeys();
-  const keyData = data.keys.find(k => k.key === key);
-  
-  if (!keyData) {
-    return res.status(404).json({ status: 'invalid', message: 'Chave inválida' });
-  }
-  
-  const now = Date.now();
-  
-  if (keyData.status === 'blocked') {
-    return res.json({ status: 'blocked', message: 'Esta chave foi bloqueada' });
-  }
-  
-  if (now > keyData.expireAt) {
-    return res.json({ status: 'expired', message: 'Chave expirada' });
-  }
-  
-  const tempoRestante = keyData.expireAt - now;
-  
-  return res.json({
-    status: 'valid',
-    plano: keyData.plan,
-    tempoRestante,
-    message: 'Autenticação bem-sucedida'
-  });
-});
-
-app.post('/generate', (req, res) => {
-  // Gera uma casa segura aleatória (1-25)
-  const casaSegura = Math.floor(Math.random() * 25) + 1;
-  
-  // Gera probabilidades para todas as 25 casas
-  const tabuleiro = Array(25).fill().map((_, index) => {
-    const numero = index + 1;
-    let probabilidade;
+// Calcular data de expiração com base no plano
+function calculateExpiryDate(plan) {
+    const now = new Date();
+    const expiryDate = new Date(now);
     
-    if (numero === casaSegura) {
-      probabilidade = Math.floor(Math.random() * 21) + 80; // 80-100%
-    } else {
-      probabilidade = Math.floor(Math.random() * 41) + 10; // 10-50%
+    switch (plan) {
+        case '7d':
+            expiryDate.setDate(expiryDate.getDate() + 7);
+            break;
+        case '15d':
+            expiryDate.setDate(expiryDate.getDate() + 15);
+            break;
+        case '30d':
+            expiryDate.setDate(expiryDate.getDate() + 30);
+            break;
+        default:
+            expiryDate.setDate(expiryDate.getDate() + 7);
+    }
+    
+    return expiryDate;
+}
+
+// Calcular tempo restante em milissegundos
+function calculateTimeRemaining(expiryDateStr) {
+    const now = new Date();
+    const expiryDate = new Date(expiryDateStr);
+    return Math.max(0, expiryDate - now);
+}
+
+// Verificar status da chave
+function checkKeyStatus(key) {
+    const data = loadKeys();
+    const keyInfo = data.keys.find(k => k.key === key);
+    
+    if (!keyInfo) {
+        return { status: 'invalid' };
+    }
+    
+    if (keyInfo.status === 'blocked') {
+        return { status: 'blocked' };
+    }
+    
+    const timeRemaining = calculateTimeRemaining(keyInfo.expiresAt);
+    if (timeRemaining <= 0) {
+        return { status: 'expired' };
     }
     
     return {
-      numero,
-      probabilidade,
-      seguro: numero === casaSegura
+        status: 'valid',
+        plano: keyInfo.plan,
+        tempoRestante: timeRemaining
     };
-  });
-  
-  res.json({
-    casaSegura,
-    tabuleiro
-  });
+}
+
+// Rota de autenticação
+app.post('/auth', (req, res) => {
+    const { key } = req.body;
+    
+    if (!key) {
+        return res.status(400).json({ error: 'Chave não fornecida' });
+    }
+    
+    const keyStatus = checkKeyStatus(key);
+    res.json(keyStatus);
 });
 
-// API para o bot Telegram
-app.post('/api/keys/create', (req, res) => {
-  const { plan, adminKey } = req.body;
-  
-  // Em um sistema real, verificaríamos uma chave de API aqui
-  if (adminKey !== process.env.ADMIN_KEY && adminKey !== 'ac-mines-admin-key') {
-    return res.status(401).json({ error: 'Não autorizado' });
-  }
-  
-  if (!['7d', '15d', '30d'].includes(plan)) {
-    return res.status(400).json({ error: 'Plano inválido' });
-  }
-  
-  const data = loadKeys();
-  const newKey = generateKey(plan);
-  
-  data.keys.push(newKey);
-  
-  if (saveKeys(data)) {
-    res.json({ success: true, key: newKey });
-  } else {
-    res.status(500).json({ error: 'Erro ao salvar a chave' });
-  }
+// Rota para gerar previsão
+app.post('/generate', (req, res) => {
+    const { key } = req.body;
+    
+    if (!key) {
+        return res.status(400).json({ error: 'Chave não fornecida' });
+    }
+    
+    const keyStatus = checkKeyStatus(key);
+    if (keyStatus.status !== 'valid') {
+        return res.status(403).json({ error: 'Chave inválida ou expirada' });
+    }
+    
+    // Gerar probabilidades aleatórias para o tabuleiro 5x5
+    const probabilities = [];
+    for (let i = 0; i < 25; i++) {
+        probabilities.push(Math.floor(Math.random() * 100) + 1);
+    }
+    
+    // Encontrar a casa com maior probabilidade
+    let highestProb = 0;
+    let recommendedTile = 0;
+    
+    for (let i = 0; i < probabilities.length; i++) {
+        if (probabilities[i] > highestProb) {
+            highestProb = probabilities[i];
+            recommendedTile = i;
+        }
+    }
+    
+    res.json({
+        success: true,
+        probabilities,
+        recommended: recommendedTile
+    });
 });
 
-app.post('/api/keys/list', (req, res) => {
-  const { adminKey } = req.body;
-  
-  if (adminKey !== process.env.ADMIN_KEY && adminKey !== 'ac-mines-admin-key') {
-    return res.status(401).json({ error: 'Não autorizado' });
-  }
-  
-  const data = loadKeys();
-  res.json({ keys: data.keys });
+// Rota para gerar nova chave
+app.post('/generateKey', (req, res) => {
+    const { plan } = req.body;
+    
+    if (!plan || !['7d', '15d', '30d'].includes(plan)) {
+        return res.status(400).json({ error: 'Plano inválido' });
+    }
+    
+    const data = loadKeys();
+    const now = new Date();
+    const expiryDate = calculateExpiryDate(plan);
+    
+    const newKey = {
+        key: generateRandomString(),
+        plan,
+        createdAt: now.toISOString(),
+        status: 'active',
+        expiresAt: expiryDate.toISOString()
+    };
+    
+    data.keys.push(newKey);
+    saveKeys(data);
+    
+    res.json(newKey);
 });
 
-app.post('/api/keys/block', (req, res) => {
-  const { key, adminKey } = req.body;
-  
-  if (adminKey !== process.env.ADMIN_KEY && adminKey !== 'ac-mines-admin-key') {
-    return res.status(401).json({ error: 'Não autorizado' });
-  }
-  
-  const data = loadKeys();
-  const keyIndex = data.keys.findIndex(k => k.key === key);
-  
-  if (keyIndex === -1) {
-    return res.status(404).json({ error: 'Chave não encontrada' });
-  }
-  
-  data.keys[keyIndex].status = 'blocked';
-  
-  if (saveKeys(data)) {
-    res.json({ success: true });
-  } else {
-    res.status(500).json({ error: 'Erro ao bloquear a chave' });
-  }
-});
-
-app.post('/api/keys/delete', (req, res) => {
-  const { key, adminKey } = req.body;
-  
-  if (adminKey !== process.env.ADMIN_KEY && adminKey !== 'ac-mines-admin-key') {
-    return res.status(401).json({ error: 'Não autorizado' });
-  }
-  
-  const data = loadKeys();
-  const keyIndex = data.keys.findIndex(k => k.key === key);
-  
-  if (keyIndex === -1) {
-    return res.status(404).json({ error: 'Chave não encontrada' });
-  }
-  
-  data.keys.splice(keyIndex, 1);
-  
-  if (saveKeys(data)) {
-    res.json({ success: true });
-  } else {
-    res.status(500).json({ error: 'Erro ao deletar a chave' });
-  }
-});
-
-// Iniciar servidor
+// Iniciar o servidor
 app.listen(PORT, () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
+    console.log(`Servidor rodando na porta ${PORT}`);
+    ensureKeysFile();
 });
