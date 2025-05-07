@@ -6,9 +6,9 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
-app.use(cors());
 app.use(express.json());
-app.use(express.static('public'));
+app.use(cors());
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Helper functions
 const readKeysFile = () => {
@@ -23,7 +23,11 @@ const readKeysFile = () => {
 
 const writeKeysFile = (keys) => {
   try {
-    fs.writeFileSync(path.join(__dirname, 'keys.json'), JSON.stringify(keys, null, 2), 'utf8');
+    fs.writeFileSync(
+      path.join(__dirname, 'keys.json'),
+      JSON.stringify(keys, null, 2),
+      'utf8'
+    );
     return true;
   } catch (error) {
     console.error('Error writing keys file:', error);
@@ -31,158 +35,184 @@ const writeKeysFile = (keys) => {
   }
 };
 
-const calculateTimeRemaining = (createdAt, planDays) => {
-  const createdDate = new Date(createdAt);
-  const expiryDate = new Date(createdDate);
-  expiryDate.setDate(expiryDate.getDate() + parseInt(planDays));
-  
-  const timeRemaining = expiryDate - new Date();
-  return Math.max(0, Math.floor(timeRemaining / 1000)); // Return seconds remaining
-};
-
 // Initialize keys.json if it doesn't exist
 if (!fs.existsSync(path.join(__dirname, 'keys.json'))) {
   writeKeysFile([]);
-  console.log('Created empty keys.json file');
 }
 
-// Authentication Endpoint
+// Calculate time remaining in seconds
+const calculateTimeRemaining = (keyData) => {
+  if (keyData.status !== 'active') return 0;
+  
+  const createdAt = new Date(keyData.createdAt);
+  const now = new Date();
+  
+  let daysToAdd = 0;
+  if (keyData.plan === '7d') daysToAdd = 7;
+  else if (keyData.plan === '15d') daysToAdd = 15;
+  else if (keyData.plan === '30d') daysToAdd = 30;
+  
+  const expiryDate = new Date(createdAt);
+  expiryDate.setDate(expiryDate.getDate() + daysToAdd);
+  
+  const timeRemaining = expiryDate - now;
+  return timeRemaining > 0 ? Math.floor(timeRemaining / 1000) : 0;
+};
+
+// Authentication endpoint
 app.post('/auth', (req, res) => {
   const { key } = req.body;
-  
   if (!key) {
     return res.status(400).json({ error: 'Key is required' });
   }
-  
+
   const keys = readKeysFile();
   const keyData = keys.find(k => k.key === key);
-  
+
   if (!keyData) {
     return res.status(404).json({ status: 'invalid', message: 'Key not found' });
   }
-  
+
+  const timeRemaining = calculateTimeRemaining(keyData);
+
+  // Check if the key has expired
+  if (timeRemaining <= 0 && keyData.status === 'active') {
+    keyData.status = 'expired';
+    writeKeysFile(keys);
+    return res.json({ status: 'expired', message: 'Key has expired' });
+  }
+
   if (keyData.status === 'blocked') {
-    return res.status(403).json({ status: 'blocked', message: 'This key has been blocked' });
+    return res.json({ status: 'blocked', message: 'Key has been blocked' });
   }
-  
-  const planDays = parseInt(keyData.plan.replace('d', ''));
-  const timeRemaining = calculateTimeRemaining(keyData.createdAt, planDays);
-  
-  if (timeRemaining <= 0) {
-    return res.status(403).json({ status: 'expired', message: 'Key has expired' });
-  }
-  
-  res.json({
+
+  return res.json({
     status: 'valid',
     plan: keyData.plan,
     timeRemaining: timeRemaining,
-    createdAt: keyData.createdAt
+    message: 'Authentication successful'
   });
 });
 
-// Generate Mine Signal
+// Generate signal endpoint
 app.post('/generate', (req, res) => {
-  // Simplified signal generation logic
-  const board = [];
-  
-  // Generate a 5x5 board with probabilities
+  const { key } = req.body;
+  if (!key) {
+    return res.status(400).json({ error: 'Key is required' });
+  }
+
+  const keys = readKeysFile();
+  const keyData = keys.find(k => k.key === key);
+
+  if (!keyData || keyData.status !== 'active' || calculateTimeRemaining(keyData) <= 0) {
+    return res.status(403).json({ error: 'Invalid or expired key' });
+  }
+
+  // Generate the 5x5 grid with probabilities
+  const grid = [];
   for (let i = 0; i < 5; i++) {
     for (let j = 0; j < 5; j++) {
-      const risk = Math.random();
-      board.push({
-        position: i * 5 + j,
-        risk: risk,
-        safe: risk < 0.7 // 70% chance of being safe
+      const probability = Math.floor(Math.random() * 101); // 0-100
+      grid.push({
+        position: i * 5 + j + 1,
+        probability: probability,
+        safe: probability > 65 // Consider safe if probability > 65%
       });
     }
   }
-  
-  // Sort by risk (lowest risk first)
-  board.sort((a, b) => a.risk - b.risk);
-  
-  // Select a safe spot (lowest risk)
-  const safestSpot = board[0].position;
-  
-  res.json({
-    board: board,
-    recommendation: safestSpot
+
+  // Sort by probability to find safest positions
+  const sortedPositions = [...grid].sort((a, b) => b.probability - a.probability);
+  const recommendedPosition = sortedPositions[0].position;
+
+  return res.json({
+    recommendedPosition: recommendedPosition,
+    grid: grid
   });
 });
 
-// Admin Routes
-const ADMIN_PASSWORD = 'admin123'; // Fixed password for admin access
+// Admin routes
+const ADMIN_PASSWORD = "admin123"; // Fixed admin password
 
-// Admin Authentication Middleware
+// Admin authentication middleware
 const authenticateAdmin = (req, res, next) => {
   const { password } = req.body;
-  
   if (password !== ADMIN_PASSWORD) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
-  
   next();
 };
 
-// Admin Login
+// Admin login
 app.post('/admin/login', (req, res) => {
   const { password } = req.body;
-  
   if (password === ADMIN_PASSWORD) {
-    res.json({ success: true });
-  } else {
-    res.status(401).json({ error: 'Invalid password' });
+    return res.json({ success: true });
   }
+  return res.status(401).json({ error: 'Unauthorized' });
 });
 
-// Get All Keys
+// List all keys
 app.post('/admin/keys', authenticateAdmin, (req, res) => {
   const keys = readKeysFile();
-  res.json(keys);
+  res.json({ keys });
 });
 
-// Create New Key
+// Create new key
 app.post('/admin/keys/create', authenticateAdmin, (req, res) => {
   const { plan } = req.body;
-  
   if (!plan || !['7d', '15d', '30d'].includes(plan)) {
-    return res.status(400).json({ error: 'Valid plan (7d, 15d, or 30d) is required' });
+    return res.status(400).json({ error: 'Valid plan required (7d, 15d, or 30d)' });
   }
-  
+
   const keys = readKeysFile();
   
-  // Generate a random key
-  const newKey = Math.random().toString(36).substring(2, 10);
+  // Generate a unique key
+  const generateKey = () => {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let result = '';
+    for (let i = 0; i < 8; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
+  };
   
-  keys.push({
+  let newKey;
+  do {
+    newKey = generateKey();
+  } while (keys.some(k => k.key === newKey));
+  
+  const keyData = {
     key: newKey,
     plan: plan,
     createdAt: new Date().toISOString(),
     status: 'active'
-  });
+  };
+  
+  keys.push(keyData);
   
   if (writeKeysFile(keys)) {
-    res.json({ success: true, key: newKey });
+    res.json({ success: true, key: keyData });
   } else {
     res.status(500).json({ error: 'Failed to save key' });
   }
 });
 
-// Block Key
+// Block key
 app.post('/admin/keys/block', authenticateAdmin, (req, res) => {
   const { key } = req.body;
-  
   if (!key) {
     return res.status(400).json({ error: 'Key is required' });
   }
-  
+
   const keys = readKeysFile();
-  const keyIndex = keys.findIndex(k => k.key === key);
-  
-  if (keyIndex === -1) {
+  const keyData = keys.find(k => k.key === key);
+
+  if (!keyData) {
     return res.status(404).json({ error: 'Key not found' });
   }
-  
-  keys[keyIndex].status = 'blocked';
+
+  keyData.status = 'blocked';
   
   if (writeKeysFile(keys)) {
     res.json({ success: true });
@@ -191,14 +221,13 @@ app.post('/admin/keys/block', authenticateAdmin, (req, res) => {
   }
 });
 
-// Delete Key
+// Delete key
 app.post('/admin/keys/delete', authenticateAdmin, (req, res) => {
   const { key } = req.body;
-  
   if (!key) {
     return res.status(400).json({ error: 'Key is required' });
   }
-  
+
   let keys = readKeysFile();
   const initialLength = keys.length;
   
@@ -213,6 +242,16 @@ app.post('/admin/keys/delete', authenticateAdmin, (req, res) => {
   } else {
     res.status(500).json({ error: 'Failed to delete key' });
   }
+});
+
+// Serve the admin panel
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
+// Serve the main application
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // Start the server
