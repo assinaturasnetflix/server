@@ -2,13 +2,16 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const jwt = require('jsonwebtoken');
+const bodyParser = require('body-parser');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
+const JWT_SECRET = process.env.JWT_SECRET || 'ac-mines-hack-secret-key-2025';
 
 // Middleware
-app.use(express.json());
 app.use(cors());
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(bodyParser.json());
 
 // Helper functions
 const readKeysFile = () => {
@@ -35,141 +38,178 @@ const writeKeysFile = (keys) => {
   }
 };
 
+const calculateTimeRemaining = (key) => {
+  const createdAt = new Date(key.createdAt);
+  let daysToAdd = 0;
+  
+  if (key.plan === '7d') daysToAdd = 7;
+  else if (key.plan === '15d') daysToAdd = 15;
+  else if (key.plan === '30d') daysToAdd = 30;
+  
+  const expirationDate = new Date(createdAt);
+  expirationDate.setDate(expirationDate.getDate() + daysToAdd);
+  
+  const now = new Date();
+  const timeRemaining = expirationDate - now;
+  
+  return Math.max(0, Math.floor(timeRemaining / 1000)); // Return seconds remaining
+};
+
+const verifyToken = (req, res, next) => {
+  const token = req.headers.authorization?.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({ message: 'Authentication required' });
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (error) {
+    return res.status(401).json({ message: 'Invalid token' });
+  }
+};
+
 // Initialize keys.json if it doesn't exist
 if (!fs.existsSync(path.join(__dirname, 'keys.json'))) {
-  writeKeysFile([]);
+  writeKeysFile([
+    {
+      key: "demo123",
+      plan: "7d",
+      createdAt: new Date().toISOString(),
+      status: "active"
+    }
+  ]);
 }
 
-// Calculate time remaining in seconds
-const calculateTimeRemaining = (keyData) => {
-  if (keyData.status !== 'active') return 0;
-  
-  const createdAt = new Date(keyData.createdAt);
-  const now = new Date();
-  
-  let daysToAdd = 0;
-  if (keyData.plan === '7d') daysToAdd = 7;
-  else if (keyData.plan === '15d') daysToAdd = 15;
-  else if (keyData.plan === '30d') daysToAdd = 30;
-  
-  const expiryDate = new Date(createdAt);
-  expiryDate.setDate(expiryDate.getDate() + daysToAdd);
-  
-  const timeRemaining = expiryDate - now;
-  return timeRemaining > 0 ? Math.floor(timeRemaining / 1000) : 0;
-};
-
-// Authentication endpoint
+// Routes
 app.post('/auth', (req, res) => {
   const { key } = req.body;
+  
   if (!key) {
-    return res.status(400).json({ error: 'Key is required' });
+    return res.status(400).json({ message: 'Key is required' });
   }
-
+  
   const keys = readKeysFile();
-  const keyData = keys.find(k => k.key === key);
-
-  if (!keyData) {
-    return res.status(404).json({ status: 'invalid', message: 'Key not found' });
+  const foundKey = keys.find(k => k.key === key);
+  
+  if (!foundKey) {
+    return res.status(404).json({ message: 'Invalid key', status: 'invalid' });
   }
-
-  const timeRemaining = calculateTimeRemaining(keyData);
-
-  // Check if the key has expired
-  if (timeRemaining <= 0 && keyData.status === 'active') {
-    keyData.status = 'expired';
+  
+  if (foundKey.status !== 'active') {
+    return res.status(403).json({ message: 'Key is blocked', status: 'blocked' });
+  }
+  
+  const timeRemaining = calculateTimeRemaining(foundKey);
+  
+  if (timeRemaining <= 0) {
+    foundKey.status = 'expired';
     writeKeysFile(keys);
-    return res.json({ status: 'expired', message: 'Key has expired' });
+    return res.status(403).json({ message: 'Key has expired', status: 'expired' });
   }
-
-  if (keyData.status === 'blocked') {
-    return res.json({ status: 'blocked', message: 'Key has been blocked' });
-  }
-
-  return res.json({
+  
+  // Generate JWT token
+  const token = jwt.sign(
+    { key: foundKey.key, plan: foundKey.plan },
+    JWT_SECRET,
+    { expiresIn: timeRemaining + 's' }
+  );
+  
+  res.json({
     status: 'valid',
-    plan: keyData.plan,
-    timeRemaining: timeRemaining,
-    message: 'Authentication successful'
+    plan: foundKey.plan,
+    timeRemaining,
+    token
   });
 });
 
-// Generate signal endpoint
-app.post('/generate', (req, res) => {
-  const { key } = req.body;
-  if (!key) {
-    return res.status(400).json({ error: 'Key is required' });
-  }
-
-  const keys = readKeysFile();
-  const keyData = keys.find(k => k.key === key);
-
-  if (!keyData || keyData.status !== 'active' || calculateTimeRemaining(keyData) <= 0) {
-    return res.status(403).json({ error: 'Invalid or expired key' });
-  }
-
-  // Generate the 5x5 grid with probabilities
-  const grid = [];
-  for (let i = 0; i < 5; i++) {
-    for (let j = 0; j < 5; j++) {
-      const probability = Math.floor(Math.random() * 101); // 0-100
-      grid.push({
-        position: i * 5 + j + 1,
-        probability: probability,
-        safe: probability > 65 // Consider safe if probability > 65%
-      });
+app.post('/generate', verifyToken, (req, res) => {
+  // Simulate mines game probabilities
+  const board = [];
+  const rows = 5;
+  const cols = 5;
+  
+  // Random safe position
+  const safeRow = Math.floor(Math.random() * rows);
+  const safeCol = Math.floor(Math.random() * cols);
+  
+  for (let i = 0; i < rows; i++) {
+    const row = [];
+    for (let j = 0; j < cols; j++) {
+      // Each cell has either high or low probability of being safe
+      let probability;
+      
+      if (i === safeRow && j === safeCol) {
+        // Safe cell with high probability
+        probability = Math.floor(80 + Math.random() * 20); // 80-99%
+      } else {
+        // Other cells with varying probabilities
+        probability = Math.floor(5 + Math.random() * 70); // 5-75%
+      }
+      
+      row.push(probability);
     }
+    board.push(row);
   }
-
-  // Sort by probability to find safest positions
-  const sortedPositions = [...grid].sort((a, b) => b.probability - a.probability);
-  const recommendedPosition = sortedPositions[0].position;
-
-  return res.json({
-    recommendedPosition: recommendedPosition,
-    grid: grid
+  
+  res.json({
+    board,
+    safePosition: { row: safeRow, col: safeCol }
   });
 });
 
-// Admin routes
-const ADMIN_PASSWORD = "admin123"; // Fixed admin password
+// Admin authentication (simple password for demo)
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
 
-// Admin authentication middleware
-const authenticateAdmin = (req, res, next) => {
-  const { password } = req.body;
-  if (password !== ADMIN_PASSWORD) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-  next();
-};
-
-// Admin login
 app.post('/admin/login', (req, res) => {
   const { password } = req.body;
-  if (password === ADMIN_PASSWORD) {
-    return res.json({ success: true });
+  
+  if (password !== ADMIN_PASSWORD) {
+    return res.status(401).json({ message: 'Invalid admin password' });
   }
-  return res.status(401).json({ error: 'Unauthorized' });
+  
+  const adminToken = jwt.sign({ role: 'admin' }, JWT_SECRET, { expiresIn: '24h' });
+  res.json({ token: adminToken });
 });
 
-// List all keys
-app.post('/admin/keys', authenticateAdmin, (req, res) => {
+const verifyAdminToken = (req, res, next) => {
+  const token = req.headers.authorization?.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({ message: 'Admin authentication required' });
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    if (decoded.role !== 'admin') {
+      return res.status(403).json({ message: 'Admin access required' });
+    }
+    req.admin = decoded;
+    next();
+  } catch (error) {
+    return res.status(401).json({ message: 'Invalid admin token' });
+  }
+};
+
+app.get('/admin/keys', verifyAdminToken, (req, res) => {
   const keys = readKeysFile();
   res.json({ keys });
 });
 
-// Create new key
-app.post('/admin/keys/create', authenticateAdmin, (req, res) => {
+app.post('/admin/keys/create', verifyAdminToken, (req, res) => {
   const { plan } = req.body;
+  
   if (!plan || !['7d', '15d', '30d'].includes(plan)) {
-    return res.status(400).json({ error: 'Valid plan required (7d, 15d, or 30d)' });
+    return res.status(400).json({ message: 'Valid plan (7d, 15d, or 30d) is required' });
   }
-
+  
   const keys = readKeysFile();
   
-  // Generate a unique key
+  // Generate random key
   const generateKey = () => {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
     let result = '';
     for (let i = 0; i < 8; i++) {
       result += chars.charAt(Math.floor(Math.random() * chars.length));
@@ -177,81 +217,63 @@ app.post('/admin/keys/create', authenticateAdmin, (req, res) => {
     return result;
   };
   
-  let newKey;
-  do {
+  let newKey = generateKey();
+  
+  // Make sure key is unique
+  while (keys.some(k => k.key === newKey)) {
     newKey = generateKey();
-  } while (keys.some(k => k.key === newKey));
+  }
   
   const keyData = {
     key: newKey,
-    plan: plan,
+    plan,
     createdAt: new Date().toISOString(),
     status: 'active'
   };
   
   keys.push(keyData);
+  writeKeysFile(keys);
   
-  if (writeKeysFile(keys)) {
-    res.json({ success: true, key: keyData });
-  } else {
-    res.status(500).json({ error: 'Failed to save key' });
-  }
+  res.json({ message: 'Key created successfully', key: keyData });
 });
 
-// Block key
-app.post('/admin/keys/block', authenticateAdmin, (req, res) => {
-  const { key } = req.body;
-  if (!key) {
-    return res.status(400).json({ error: 'Key is required' });
+app.post('/admin/keys/update', verifyAdminToken, (req, res) => {
+  const { key, status } = req.body;
+  
+  if (!key || !status || !['active', 'blocked'].includes(status)) {
+    return res.status(400).json({ message: 'Valid key and status (active or blocked) are required' });
   }
-
+  
   const keys = readKeysFile();
-  const keyData = keys.find(k => k.key === key);
-
-  if (!keyData) {
-    return res.status(404).json({ error: 'Key not found' });
-  }
-
-  keyData.status = 'blocked';
+  const keyIndex = keys.findIndex(k => k.key === key);
   
-  if (writeKeysFile(keys)) {
-    res.json({ success: true });
-  } else {
-    res.status(500).json({ error: 'Failed to update key' });
+  if (keyIndex === -1) {
+    return res.status(404).json({ message: 'Key not found' });
   }
+  
+  keys[keyIndex].status = status;
+  writeKeysFile(keys);
+  
+  res.json({ message: 'Key updated successfully', key: keys[keyIndex] });
 });
 
-// Delete key
-app.post('/admin/keys/delete', authenticateAdmin, (req, res) => {
+app.post('/admin/keys/delete', verifyAdminToken, (req, res) => {
   const { key } = req.body;
+  
   if (!key) {
-    return res.status(400).json({ error: 'Key is required' });
-  }
-
-  let keys = readKeysFile();
-  const initialLength = keys.length;
-  
-  keys = keys.filter(k => k.key !== key);
-  
-  if (keys.length === initialLength) {
-    return res.status(404).json({ error: 'Key not found' });
+    return res.status(400).json({ message: 'Key is required' });
   }
   
-  if (writeKeysFile(keys)) {
-    res.json({ success: true });
-  } else {
-    res.status(500).json({ error: 'Failed to delete key' });
+  const keys = readKeysFile();
+  const filteredKeys = keys.filter(k => k.key !== key);
+  
+  if (filteredKeys.length === keys.length) {
+    return res.status(404).json({ message: 'Key not found' });
   }
-});
-
-// Serve the admin panel
-app.get('/admin', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
-});
-
-// Serve the main application
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  
+  writeKeysFile(filteredKeys);
+  
+  res.json({ message: 'Key deleted successfully' });
 });
 
 // Start the server
