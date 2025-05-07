@@ -1,0 +1,20 @@
+[
+  {
+    "key": "abc123",
+    "plan": "15d",
+    "createdAt": "2025-05-01T00:00:00Z",
+    "status": "active"
+  },
+  {
+    "key": "test7days",
+    "plan": "7d",
+    "createdAt": "2025-05-01T00:00:00Z",
+    "status": "active"
+  },
+  {
+    "key": "premium30",
+    "plan": "30d",
+    "createdAt": "2025-05-01T00:00:00Z",
+    "status": "active"
+  }
+]
