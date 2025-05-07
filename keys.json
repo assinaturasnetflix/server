@@ -1,20 +1,20 @@
 [
   {
-    "key": "ABC123",
+    "key": "demo123",
     "plan": "7d",
-    "createdAt": "2025-05-01T00:00:00Z",
+    "createdAt": "2025-05-07T10:00:00Z",
     "status": "active"
   },
   {
-    "key": "DEF456",
+    "key": "premium15",
     "plan": "15d",
-    "createdAt": "2025-05-03T00:00:00Z",
+    "createdAt": "2025-05-07T10:00:00Z",
     "status": "active"
   },
   {
-    "key": "GHI789",
+    "key": "vip30",
     "plan": "30d",
-    "createdAt": "2025-04-20T00:00:00Z",
+    "createdAt": "2025-05-07T10:00:00Z",
     "status": "active"
   }
 ]
