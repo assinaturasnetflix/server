@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Caçador de Rosas - Aviator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Caçador de Rosas - Aviator</h1>
+      <p class="version">Caçador de Rosas V1</p>
+    </header>
+
+    <div class="license-info">
+      <div id="license-status" class="license-status inactive">
+        <span class="status-dot"></span>
+        <span class="status-text">Inativo</span>
+      </div>
+      <div class="license-details hidden" id="license-details">
+        <p>Plano: <span id="license-type">-</span></p>
+        <p>Tempo Restante: <span id="license-remaining">-</span> dias</p>
+      </div>
+    </div>
+
+    <div class="key-input-container">
+      <input type="text" id="key-input" placeholder="Digite sua chave de acesso" maxlength="8">
+      <button id="activate-key" class="btn">Ativar</button>
+    </div>
+
+    <div class="dashboard hidden" id="dashboard">
+      <div class="controls">
+        <button id="generate-signal" class="btn primary">Gerar Sinal</button>
+      </div>
+
+      <div class="candles-container">
+        <h2>Simulação de Velas</h2>
+        <div class="candles" id="candles-display"></div>
+      </div>
+
+      <div class="roses-container">
+        <h2>Rosas Detectadas</h2>
+        <div class="roses" id="roses-display"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="loader hidden" id="loader">
+    <div class="spinner"></div>
+  </div>
+
+  <div class="modal" id="error-modal">
+    <div class="modal-content">
+      <h3 id="error-title">Erro</h3>
+      <p id="error-message">Ocorreu um erro.</p>
+      <button class="btn" id="close-error">Fechar</button>
+    </div>
+  </div>
+
+  <script src="client.js"></script>
+</body>
+</html>
