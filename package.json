@@ -1,28 +1,22 @@
 {
-  "name": "ac-mines-platform",
+  "name": "cacador-de-rosas-aviator",
   "version": "1.0.0",
-  "description": "Platform for AC MINES with key management and mine information",
-  "main": "app.js",
+  "description": "Bot web para detecção de 'rosas' em simulação de velas coloridas",
+  "main": "index.js",
   "scripts": {
-    "start": "node app.js",
-    "dev": "nodemon app.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [
-    "mines",
-    "platform",
-    "keys"
-  ],
-  "author": "",
-  "license": "ISC",
-  "dependencies": {
-    "express": "^4.18.2",
-    "sqlite3": "^5.1.6"
-  },
-  "devDependencies": {
-    "nodemon": "^3.0.1"
+    "start": "node index.js",
+    "dev": "nodemon index.js"
   },
   "engines": {
-    "node": ">=14.0.0"
+    "node": "18.x"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "sqlite3": "^5.1.6",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.22"
   }
 }
