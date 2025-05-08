@@ -181,11 +181,11 @@ app.post('/subscribe-emola', async (req, res) => {
     
     // Prepare payment request
     const paymentData = {
-      carteira: "1746519798335x143095610732969980",
-      numero: numero,
-      quem_comprou: numero,
-      valor: planConfig[plan].price.toString()
-    };
+  carteira: "1746519798335x143095610732969980",
+  numero: numero,
+  "quem comprou": numero,
+  valor: planConfig[plan].price.toString()
+};
     
     // Make payment request to eMola
     const response = await fetch('https://mozpayment.co.mz/api/1.1/wf/pagamentorotativoemola', {
@@ -249,11 +249,11 @@ app.post('/subscribe-mpesa', async (req, res) => {
     
     // Prepare payment request
     const paymentData = {
-      carteira: "1746519798335x143095610732969980",
-      numero: numero,
-      quem_comprou: numero,
-      valor: planConfig[plan].price.toString()
-    };
+  carteira: "1746519798335x143095610732969980",
+  numero: numero,
+  "quem comprou": numero,
+  valor: planConfig[plan].price.toString()
+};
     
     // Make payment request to MPesa
     const response = await fetch('https://mozpayment.co.mz/api/1.1/wf/pagamentorotativompesa', {
