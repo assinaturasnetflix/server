@@ -1,19 +1,28 @@
 {
-  "name": "ac-mines",
+  "name": "ac-mines-platform",
   "version": "1.0.0",
-  "description": "Plataforma AC MINES com Gerenciamento de Chaves e Informações de Minas",
-  "main": "server.js",
+  "description": "Platform for AC MINES with key management and mine information",
+  "main": "app.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js"
+    "start": "node app.js",
+    "dev": "nodemon app.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
+  "keywords": [
+    "mines",
+    "platform",
+    "keys"
+  ],
+  "author": "",
+  "license": "ISC",
   "dependencies": {
     "express": "^4.18.2",
-    "sqlite3": "^5.1.6",
-    "cors": "^2.8.5",
-    "uuid": "^9.0.0"
+    "sqlite3": "^5.1.6"
   },
   "devDependencies": {
-    "nodemon": "^2.0.22"
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=14.0.0"
   }
 }
