@@ -10,32 +10,33 @@ app.use(express.json()); // Para receber JSON no corpo da requisição
 app.post('/iniciar-pagamento', async (req, res) => {
   const { numero, nome } = req.body;
 
+  // Verifica se os campos obrigatórios foram preenchidos
   if (!numero || !nome) {
     return res.status(400).json({ message: 'Número e nome são obrigatórios.' });
   }
 
   try {
-    // Iniciar o pagamento com a API de pagamento
+    // Realiza o pagamento com a API externa
     const response = await axios.post('https://mozpayment.co.mz/api/1.1/wf/pagamentorotativoemola', {
-      carteira: "1746519798335x143095610732969980",
+      carteira: "1746519798335x143095610732969980",  // Substitua pelo seu número de carteira
       numero: numero,
       "quem comprou": nome,
-      valor: "1"
+      valor: "1"  // Valor do pagamento
     });
 
-    // Se o pagamento foi aprovado
+    // Checa se o pagamento foi aprovado
     if (response.data.success === 'yes') {
       return res.json({ success: true, message: 'Pagamento aprovado.' });
     } else {
       return res.json({ success: false, message: 'Pagamento não aprovado.' });
     }
-    
   } catch (error) {
-    console.error('Erro ao iniciar o pagamento:', error);
-    return res.status(500).json({ success: false, message: 'Erro ao iniciar pagamento.' });
+    console.error('Erro ao tentar processar o pagamento:', error);
+    return res.status(500).json({ success: false, message: 'Erro ao processar o pagamento.' });
   }
-}
+});
 
+// Inicia o servidor na porta definida
 app.listen(port, () => {
-  console.log(`Backend rodando na porta ${port}`);
+  console.log(`Servidor rodando na porta ${port}`);
 });
