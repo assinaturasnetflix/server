@@ -1,5 +1,5 @@
 {
-  "name": "pagamento-calçao",
+  "name": "pagamento-calcao",  
   "version": "1.0.0",
   "description": "Servidor backend para realizar pagamentos com a API MozPayment",
   "main": "server.js",
