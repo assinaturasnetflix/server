@@ -1,65 +1,80 @@
 const express = require('express');
 const puppeteer = require('puppeteer');
+const cors = require('cors');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Configurar o Express para servir o index.html diretamente
-app.get('/', (req, res) => {
-    res.sendFile(__dirname + '/index.html');
-});
+app.use(cors());
+app.use(express.static(__dirname)); // serve index.html no mesmo diretório
 
-// Rota para login e captura de dados do Aviator
-app.get('/get-signals', async (req, res) => {
-    const browser = await puppeteer.launch({
-        headless: true,  // Mude para false se quiser ver o navegador
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
+let ultimasVelas = [];
 
-    const page = await browser.newPage();
-    
+(async () => {
+  console.log("[INFO] Iniciando navegador...");
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
+  });
+
+  const page = await browser.newPage();
+
+  try {
+    console.log("[INFO] Acessando site da Olabet...");
+    await page.goto('https://www.olabet.co.mz/', { waitUntil: 'networkidle2' });
+
+    console.log("[INFO] Preenchendo campos de login...");
+    await page.click('#modal-login-simple-mobile-btn', { delay: 500 }).catch(() => {});
+    await page.type('#username-modal-login-simple-mobile', '865097696');
+    await page.type('#btoLoginForm53a4006bb0b6a59fc43b286074cca9cd > div:nth-child(3) > input', '123456');
+
+    console.log("[INFO] Enviando login...");
+    await Promise.all([
+      page.click('#modal-login-simple-mobile-btn'),
+      page.waitForNavigation({ waitUntil: 'networkidle2' })
+    ]);
+
+    console.log("[INFO] Login efetuado com sucesso!");
+  } catch (err) {
+    console.error("[ERRO] Falha no login:", err.message);
+    return;
+  }
+
+  try {
+    console.log("[INFO] Acessando o Aviator...");
+    await page.goto('https://www.olabet.co.mz/aviator/', { waitUntil: 'networkidle0' });
+  } catch (err) {
+    console.error("[ERRO] Não foi possível acessar o Aviator:", err.message);
+    return;
+  }
+
+  console.log("[INFO] Extração de velas iniciada...");
+  setInterval(async () => {
     try {
-        // Acesse o site da Olabet
-        await page.goto('https://www.olabet.co.mz/', { waitUntil: 'domcontentloaded' });
+      const velas = await page.$$eval(
+        '.result-history .payout',
+        nodes => nodes.map(n => n.textContent.trim()).slice(-20)
+      );
 
-        // Espera o botão de login aparecer e clica nele
-        await page.waitForSelector('.btosystem-showlogin-btn');
-        await page.click('.btosystem-showlogin-btn');
-        
-        // Espera o formulário de login e preenche
-        await page.waitForSelector('#modal-login-simple-mobile-btn');
-        await page.type('#username-modal-login-simple-mobile', '865097696');
-        await page.type('#password-modal-login-simple-mobile', '123456');
-        await page.click('#modal-login-simple-mobile-btn');
-        
-        // Aguarda o redirecionamento para a página do Aviator
-        await page.waitForNavigation();
-        await page.goto('https://www.olabet.co.mz/aviator/', { waitUntil: 'domcontentloaded' });
-
-        // Espera a seção das velas ser carregada
-        await page.waitForSelector('app-stats-widget');
-        
-        // Captura os dados das velas
-        const velas = await page.$$eval(
-            'body > app-root > app-game > div > div.main-container > div.w-100.h-100 > div > div.game-play > div.result-history.disabled-on-game-focused > app-stats-widget > div > div.payouts-wrapper > div > div',
-            elements => {
-                return elements.map((el, index) => {
-                    const multiplicador = el.textContent.trim();
-                    return { index: index + 1, multiplicador };
-                });
-            }
-        );
-
-        // Envia os dados para o front-end
-        res.json({ signals: velas });
-
-    } catch (error) {
-        res.status(500).send('Erro ao capturar dados: ' + error.message);
-    } finally {
-        await browser.close();
+      if (velas.length) {
+        ultimasVelas = velas;
+        console.log(`[INFO] Velas atualizadas: ${velas.join(' | ')}`);
+      } else {
+        console.warn("[ALERTA] Nenhuma vela encontrada no momento.");
+      }
+    } catch (err) {
+      console.error("[ERRO] Ao extrair velas:", err.message);
     }
+  }, 2000);
+})();
+
+app.get('/velas', (req, res) => {
+  res.json(ultimasVelas);
 });
 
-// Inicia o servidor
+app.get('/', (req, res) => {
+  res.sendFile(__dirname + '/index.html');
+});
+
 app.listen(port, () => {
-    console.log(`Servidor rodando na porta ${port}`);
+  console.log(`[OK] Servidor rodando em http://localhost:${port}`);
 });
