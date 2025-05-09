@@ -1,19 +1,13 @@
 {
-  "name": "olabet-aviator-signals",
+  "name": "aviator-velas",
   "version": "1.0.0",
-  "description": "Sistema de captura de sinais do Aviator",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.17.1",
-    "puppeteer": "^19.0.0",
-    "axios": "^0.21.1"
-  },
-  "engines": {
-    "node": "14.x"
-  },
-  "author": "",
-  "license": "ISC"
+    "express": "^4.18.2",
+    "puppeteer": "^21.3.8",
+    "cors": "^2.8.5"
+  }
 }
