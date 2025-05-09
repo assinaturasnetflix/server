@@ -1,0 +1,19 @@
+{
+  "name": "olabet-aviator-signals",
+  "version": "1.0.0",
+  "description": "Sistema de captura de sinais do Aviator",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.17.1",
+    "puppeteer": "^19.0.0",
+    "axios": "^0.21.1"
+  },
+  "engines": {
+    "node": "14.x"
+  },
+  "author": "",
+  "license": "ISC"
+}

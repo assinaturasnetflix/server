@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Olabet Aviator Signals</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@4.5.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="container">
+        <h1 class="text-center my-5">Olabet Aviator Signals</h1>
+        <button id="getSignals" class="btn btn-primary btn-block mb-3">Obter Sinais</button>
+        
+        <div id="signalsContainer" class="mt-4">
+            <h3>Sinais de Entrada:</h3>
+            <ul id="signalsList" class="list-group">
+                <!-- Os sinais serão listados aqui -->
+            </ul>
+        </div>
+
+        <canvas id="signalsChart" width="400" height="200"></canvas>
+    </div>
+
+    <script>
+        document.getElementById('getSignals').addEventListener('click', async function() {
+            try {
+                const response = await fetch('/get-signals');
+                const data = await response.json();
+
+                if (data.signals && data.signals.length > 0) {
+                    const signalsList = document.getElementById('signalsList');
+                    signalsList.innerHTML = ''; // Limpar lista antes de preencher
+                    const labels = [];
+                    const values = [];
+                    
+                    data.signals.forEach(signal => {
+                        const li = document.createElement('li');
+                        li.classList.add('list-group-item');
+                        li.textContent = `Vela ${signal.index}: Multiplicador ${signal.multiplicador}x`;
+                        signalsList.appendChild(li);
+
+                        // Preparando dados para o gráfico
+                        labels.push(`Vela ${signal.index}`);
+                        values.push(parseFloat(signal.multiplicador));
+                    });
+
+                    // Criar gráfico com Chart.js
+                    new Chart(document.getElementById('signalsChart').getContext('2d'), {
+                        type: 'line',
+                        data: {
+                            labels: labels,
+                            datasets: [{
+                                label: 'Multiplicador das Velas',
+                                data: values,
+                                borderColor: 'rgba(75, 192, 192, 1)',
+                                fill: false,
+                            }]
+                        }
+                    });
+                } else {
+                    alert('Não foram encontrados sinais.');
+                }
+            } catch (error) {
+                console.error('Erro ao obter sinais:', error);
+            }
+        });
+    </script>
+</body>
+</html>
