@@ -6,6 +6,7 @@ const axios = require('axios');
 // const ytdl = require('ytdl-core'); // Removido - não será mais usado
 const { spawn } = require('child_process'); // Adicionado para yt-dlp
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -99,12 +100,42 @@ app.get('/api/download', async (req, res) => {
     const videoId = req.query.videoId;
     const format = req.query.format; // 'mp3' or 'mp4'
 
-    if (!videoId) {
-        return res.status(400).json({ error: 'videoId is required' });
+    if (!videoId || !format || !['mp3', 'mp4'].includes(format)) {
+        return res.status(400).json({ error: 'Invalid parameters' });
     }
-    if (!format || (format !== 'mp3' && format !== 'mp4')) {
-        return res.status(400).json({ error: 'format (mp3 or mp4) is required' });
-    }
+
+    const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    const outputPath = `/tmp/%(title)s.%(ext)s`; // Saída temporária
+
+    // Define os argumentos do yt-dlp
+    const args = format === 'mp3'
+        ? `-x --audio-format mp3 -o "${outputPath}"`
+        : `-f best -o "${outputPath}"`;
+
+    exec(`/usr/local/bin/yt-dlp ${args} "${videoUrl}"`, async (error, stdout, stderr) => {
+        if (error) {
+            console.error('yt-dlp error:', error);
+            return res.status(500).json({ error: 'Erro ao processar o vídeo', details: error.message });
+        }
+
+        // Descobre qual arquivo foi baixado
+        const titleRegex = /Destination: (.+)\n?/;
+        const match = stdout.match(titleRegex) || stderr.match(titleRegex);
+        const filePath = match ? match[1].trim() : null;
+
+        if (!filePath || !fs.existsSync(filePath)) {
+            return res.status(500).json({ error: 'Arquivo de saída não encontrado' });
+        }
+
+        // Envia o arquivo
+        res.download(filePath, (err) => {
+            if (err) {
+                console.error('Download error:', err);
+            }
+            fs.unlink(filePath, () => {}); // Apaga o arquivo após envio
+        });
+    });
+});
 
     // Use standard YouTube URL for yt-dlp
     const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
