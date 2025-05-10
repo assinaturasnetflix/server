@@ -3,109 +3,48 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Automação de WhatsApp</title>
-    <link rel="stylesheet" href="styles.css">
+    <title>TubeDownloader - Baixe músicas e vídeos do YouTube</title>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>Automação de WhatsApp</h1>
-            <div id="status-indicator" class="status-offline">Offline</div>
-        </header>
-        
-        <main>
-            <div class="sidebar">
-                <div class="section">
-                    <h2>Grupos</h2>
-                    <div class="group-list" id="group-list">
-                        <p>Carregando grupos...</p>
-                    </div>
-                    <button id="refresh-groups" class="btn">Atualizar Grupos</button>
-                </div>
-                
-                <div class="section">
-                    <h2>Membros</h2>
-                    <div class="member-list" id="member-list">
-                        <p>Selecione um grupo para ver os membros</p>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="content">
-                <div class="tabs">
-                    <button class="tab-btn active" data-tab="chat">Chat Individual</button>
-                    <button class="tab-btn" data-tab="bulk">Mensagem em Massa</button>
-                    <button class="tab-btn" data-tab="settings">Configurações</button>
-                </div>
-                
-                <div class="tab-content" id="chat-tab">
-                    <div class="chat-header">
-                        <h3 id="chat-title">Selecione um contato</h3>
-                    </div>
-                    
-                    <div class="chat-messages" id="chat-messages">
-                        <p class="empty-state">Selecione um contato para ver as mensagens</p>
-                    </div>
-                    
-                    <div class="chat-input">
-                        <textarea id="message-input" placeholder="Digite sua mensagem..." disabled></textarea>
-                        <button id="send-btn" class="btn" disabled>Enviar</button>
-                        <button id="attach-btn" class="btn" disabled>📎</button>
-                    </div>
-                </div>
-                
-                <div class="tab-content hidden" id="bulk-tab">
-                    <h3>Envio em Massa</h3>
-                    
-                    <div class="form-group">
-                        <label for="bulk-group">Grupo:</label>
-                        <select id="bulk-group">
-                            <option value="">Selecione um grupo</option>
-                        </select>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="bulk-message">Mensagem:</label>
-                        <textarea id="bulk-message" placeholder="Digite a mensagem para enviar a todos os membros..."></textarea>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="bulk-file">Arquivo (opcional):</label>
-                        <input type="file" id="bulk-file">
-                    </div>
-                    
-                    <button id="bulk-send-btn" class="btn">Enviar para Todos</button>
-                    
-                    <div id="bulk-status" class="status-message"></div>
-                </div>
-                
-                <div class="tab-content hidden" id="settings-tab">
-                    <h3>Configurações</h3>
-                    
-                    <div class="form-group">
-                        <label for="auto-reply">Resposta Automática:</label>
-                        <textarea id="auto-reply" placeholder="Mensagem para enviar automaticamente após resposta do contato..."></textarea>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label>Mensagens de Saudação:</label>
-                        <div id="greeting-messages">
-                            <div class="greeting-item">
-                                <input type="text" placeholder="Mensagem de saudação...">
-                                <button class="remove-btn">❌</button>
-                            </div>
-                            <button id="add-greeting" class="btn small">+ Adicionar Saudação</button>
-                        </div>
-                    </div>
-                    
-                    <button id="save-settings" class="btn">Salvar Configurações</button>
-                    
-                    <div id="settings-status" class="status-message"></div>
-                </div>
-            </div>
-        </main>
+    <div id="ad-modal" class="ad-container">
+        <div class="ad-content">
+            <div id="ad-display"></div>
+            <button id="close-ad">Fechar [5s]</button>
+        </div>
     </div>
-    
-    <script src="app.js"></script>
+
+    <header>
+        <div class="logo">
+            <h1>Tube<span>Downloader</span></h1>
+        </div>
+        <div class="header-ad" id="header-ad"></div>
+    </header>
+
+    <main>
+        <section class="search-section">
+            <div class="search-container">
+                <input type="text" id="search-input" placeholder="Pesquise músicas ou vídeos...">
+                <button id="search-button">Buscar</button>
+            </div>
+        </section>
+
+        <section class="results-section">
+            <div class="top-ad" id="top-ad"></div>
+            <div id="results-container"></div>
+            <div class="bottom-ad" id="bottom-ad"></div>
+        </section>
+
+        <div id="loading" class="loading-spinner">
+            <div class="spinner"></div>
+        </div>
+    </main>
+
+    <footer>
+        <p>&copy; 2025 TubeDownloader - Todos os direitos reservados</p>
+        <p><a href="admin.html">Área Administrativa</a></p>
+    </footer>
+
+    <script src="script.js"></script>
 </body>
 </html>

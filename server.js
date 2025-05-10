@@ -1,756 +1,633 @@
 const express = require('express');
-const puppeteer = require('puppeteer');
 const sqlite3 = require('sqlite3').verbose();
 const { open } = require('sqlite');
-const axios = require('axios');
-const fs = require('fs');
 const path = require('path');
-const cors = require('cors');
+const fs = require('fs');
+const multer = require('multer');
+const ytdl = require('ytdl-core');
+const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
+const { promisify } = require('util');
+const writeFileAsync = promisify(fs.writeFile);
+const unlinkAsync = promisify(fs.unlink);
 
-// Configurações
-const PORT = process.env.PORT || 3000;
-const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN || '7661749164:AAGpaI0ugskoRuH98zLpQ7hql-vOuPBnnVg';
-const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || '6547496177';
-const QR_CHECK_INTERVAL = 5000; // 5 segundos
-
-// Inicializar aplicação Express
+// Configuração do aplicativo
 const app = express();
-app.use(cors());
+const PORT = process.env.PORT || 3000;
+const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret_key';
+
+// Configuração para processar JSON e dados de formulário
 app.use(express.json());
-app.use(express.static('public'));
+app.use(express.urlencoded({ extended: true }));
 
-// Variáveis globais
-let browser;
-let page;
+// Configuração do Multer para upload de arquivos
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, './'); // Salvar na raiz, conforme exigido
+    },
+    filename: (req, file, cb) => {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        const ext = path.extname(file.originalname);
+        cb(null, 'ad-' + uniqueSuffix + ext);
+    }
+});
+
+const upload = multer({ 
+    storage: storage,
+    limits: { fileSize: 10 * 1024 * 1024 }, // Limite de 10MB
+    fileFilter: (req, file, cb) => {
+        const allowedTypes = /jpeg|jpg|png|gif|mp4/;
+        const ext = path.extname(file.originalname).toLowerCase();
+        const mimetype = allowedTypes.test(file.mimetype);
+        
+        if (mimetype && allowedTypes.test(ext)) {
+            return cb(null, true);
+        }
+        
+        cb(new Error('Apenas arquivos de imagem (JPEG, PNG, GIF) ou vídeo (MP4) são permitidos!'));
+    }
+});
+
+// Banco de dados SQLite
 let db;
-let lastQrCode = '';
-let isLoggedIn = false;
-let qrCheckInterval;
 
-// Inicializar banco de dados
 async function initializeDatabase() {
-  // Garantir que o diretório data existe
-  if (!fs.existsSync('./data')) {
-    fs.mkdirSync('./data');
-  }
-
-  db = await open({
-    filename: './data/whatsapp_automation.db',
-    driver: sqlite3.Database
-  });
-
-  // Criar tabelas se não existirem
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS members (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      phone TEXT UNIQUE,
-      name TEXT,
-      group_name TEXT,
-      last_message_date TEXT
-    );
-    
-    CREATE TABLE IF NOT EXISTS messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      phone TEXT,
-      message TEXT,
-      direction TEXT,
-      timestamp TEXT,
-      status TEXT
-    );
-    
-    CREATE TABLE IF NOT EXISTS settings (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      key TEXT UNIQUE,
-      value TEXT
-    );
-    
-    CREATE TABLE IF NOT EXISTS conversations (
-      phone TEXT PRIMARY KEY,
-      status TEXT,
-      last_interaction TEXT,
-      messages_sent INTEGER DEFAULT 0,
-      awaiting_reply BOOLEAN DEFAULT 0
-    );
-  `);
-
-  // Inserir configurações padrão se não existirem
-  const greeting_messages = [
-    "Olá",
-    "Tudo bem?",
-    "Como vai?",
-    "Oi, tudo certo?",
-    "E aí, tudo bem?"
-  ];
-  
-  await db.run(`
-    INSERT OR IGNORE INTO settings (key, value) 
-    VALUES ('greeting_messages', ?)
-  `, [JSON.stringify(greeting_messages)]);
-  
-  await db.run(`
-    INSERT OR IGNORE INTO settings (key, value) 
-    VALUES ('auto_reply', 'Obrigado por responder! Como posso ajudar?')
-  `);
-  
-  console.log('Database initialized successfully');
-}
-
-// Inicializar Puppeteer e WhatsApp Web
-async function initializePuppeteer() {
-  try {
-    console.log('Initializing Puppeteer...');
-    
-    browser = await puppeteer.launch({
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--disable-gpu'
-      ]
+    db = await open({
+        filename: './database.sqlite',
+        driver: sqlite3.Database
     });
-    
-    page = await browser.newPage();
-    
-    // Navegar para o WhatsApp Web
-    await page.goto('https://web.whatsapp.com/', {
-      waitUntil: 'networkidle2',
-      timeout: 60000
-    });
-    
-    console.log('WhatsApp Web loaded');
-    
-    // Iniciar monitoramento do QR code
-    qrCheckInterval = setInterval(checkQrCode, QR_CHECK_INTERVAL);
-    
-    // Verificar se já está logado
-    page.on('load', async () => {
-      const isLogged = await checkIfLoggedIn();
-      if (isLogged && !isLoggedIn) {
-        console.log('WhatsApp logged in successfully');
-        isLoggedIn = true;
-        clearInterval(qrCheckInterval);
-        
-        // Iniciar monitoramento de mensagens recebidas
-        startMessageMonitoring();
-        
-        // Iniciar gerenciador de conversas
-        startConversationManager();
-      }
-    });
-    
-  } catch (error) {
-    console.error('Error initializing Puppeteer:', error);
-    
-    // Tentar reiniciar se ocorrer um erro
-    if (browser) await browser.close();
-    setTimeout(initializePuppeteer, 10000);
-  }
-}
 
-// Verificar se está logado no WhatsApp Web
-async function checkIfLoggedIn() {
-  try {
-    // Checar se a página principal do WhatsApp está carregada
-    const mainContent = await page.$('div[data-testid="chat-list"]');
-    return !!mainContent;
-  } catch (error) {
-    return false;
-  }
-}
+    // Tabela de usuários admin
+    await db.exec(`
+        CREATE TABLE IF NOT EXISTS admin_users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE,
+            password TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
 
-// Monitorar e enviar QR code para o Telegram
-async function checkQrCode() {
-  try {
-    if (isLoggedIn) return;
-    
-    // Buscar elemento do QR code
-    const qrCodeCanvas = await page.$('canvas');
-    if (!qrCodeCanvas) return;
-    
-    // Capturar o QR code como imagem
-    const qrCodeImageBuffer = await qrCodeCanvas.screenshot();
-    const qrCodeBase64 = qrCodeImageBuffer.toString('base64');
-    
-    // Enviar para o Telegram apenas se for diferente do último
-    if (qrCodeBase64 !== lastQrCode) {
-      lastQrCode = qrCodeBase64;
-      
-      // Salvar QR code como arquivo
-      const qrCodePath = path.join(__dirname, 'qrcode.png');
-      fs.writeFileSync(qrCodePath, qrCodeImageBuffer);
-      
-      // Enviar para o Telegram
-      await sendQrCodeToTelegram(qrCodePath);
+    // Verificar se já existe um usuário admin e criar um padrão se não houver
+    const adminCount = await db.get('SELECT COUNT(*) as count FROM admin_users');
+    if (adminCount.count === 0) {
+        const defaultPassword = crypto.createHash('sha256').update('admin123').digest('hex');
+        await db.run('INSERT INTO admin_users (username, password) VALUES (?, ?)', ['admin', defaultPassword]);
     }
-  } catch (error) {
-    console.error('Error checking QR code:', error);
-  }
+
+    // Tabela de anúncios
+    await db.exec(`
+        CREATE TABLE IF NOT EXISTS ads (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT NOT NULL,
+            content TEXT NOT NULL,
+            link TEXT,
+            page TEXT NOT NULL,
+            position TEXT NOT NULL,
+            status TEXT DEFAULT 'active',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+
+    // Tabela de estatísticas de anúncios
+    await db.exec(`
+        CREATE TABLE IF NOT EXISTS ad_stats (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ad_id INTEGER NOT NULL,
+            view_count INTEGER DEFAULT 0,
+            click_count INTEGER DEFAULT 0,
+            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (ad_id) REFERENCES ads (id) ON DELETE CASCADE
+        )
+    `);
+
+    // Tabela de buscas
+    await db.exec(`
+        CREATE TABLE IF NOT EXISTS searches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            term TEXT NOT NULL,
+            count INTEGER DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_searched TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+
+    // Tabela de downloads
+    await db.exec(`
+        CREATE TABLE IF NOT EXISTS downloads (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            video_id TEXT NOT NULL,
+            format TEXT NOT NULL,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+
+    // Tabela de atividades (para o dashboard)
+    await db.exec(`
+        CREATE TABLE IF NOT EXISTS activities (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT NOT NULL,
+            details TEXT NOT NULL,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+
+    console.log('Banco de dados inicializado com sucesso!');
 }
 
-// Enviar QR code para o Telegram
-async function sendQrCodeToTelegram(qrCodePath) {
-  try {
-    const formData = new FormData();
-    formData.append('chat_id', TELEGRAM_CHAT_ID);
-    formData.append('photo', fs.createReadStream(qrCodePath));
-    formData.append('caption', 'Escaneie este QR Code para fazer login no WhatsApp Web');
+// Middleware de autenticação para rotas admin
+const authenticate = (req, res, next) => {
+    const authHeader = req.headers.authorization;
     
-    await axios.post(
-      `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendPhoto`,
-      formData,
-      {
-        headers: formData.getHeaders()
-      }
-    );
-    
-    console.log('QR code sent to Telegram');
-  } catch (error) {
-    console.error('Error sending QR code to Telegram:', error);
-  }
-}
-
-// Monitorar mensagens recebidas
-async function startMessageMonitoring() {
-  try {
-    console.log('Starting message monitoring...');
-    
-    // Usar MutationObserver via página para detectar novas mensagens
-    await page.evaluate(() => {
-      const observer = new MutationObserver((mutations) => {
-        for (const mutation of mutations) {
-          if (mutation.addedNodes.length) {
-            // Verificar se é uma mensagem não lida
-            const unreadMessages = document.querySelectorAll('span[data-testid="icon-unread-count"]');
-            if (unreadMessages.length > 0) {
-              // Notificar o backend sobre novas mensagens
-              window.checkNewMessages = true;
-            }
-          }
-        }
-      });
-      
-      // Observar a lista de chats
-      const chatList = document.querySelector('div[data-testid="chat-list"]');
-      if (chatList) {
-        observer.observe(chatList, { childList: true, subtree: true });
-      }
-    });
-    
-    // Verificar periodicamente se há mensagens não lidas
-    setInterval(async () => {
-      const hasNewMessages = await page.evaluate(() => {
-        const result = window.checkNewMessages || false;
-        window.checkNewMessages = false;
-        return result;
-      });
-      
-      if (hasNewMessages) {
-        await checkNewMessages();
-      }
-    }, 5000);
-    
-  } catch (error) {
-    console.error('Error setting up message monitoring:', error);
-  }
-}
-
-// Verificar novas mensagens
-async function checkNewMessages() {
-  try {
-    console.log('Checking for new messages...');
-    
-    // Buscar chats não lidos
-    const unreadChats = await page.$$('span[data-testid="icon-unread-count"]');
-    
-    for (const unreadChat of unreadChats) {
-      // Clicar no chat para abrir
-      await unreadChat.click();
-      await page.waitForTimeout(1000);
-      
-      // Pegar o número de telefone do contato
-      const phoneElement = await page.$('span[data-testid="conversation-info-header-chat-title"]');
-      if (!phoneElement) continue;
-      
-      const phone = await page.evaluate(el => el.textContent, phoneElement);
-      
-      // Pegar as últimas mensagens
-      const messages = await page.$$('div.message-in');
-      const lastMessage = messages[messages.length - 1];
-      
-      if (lastMessage) {
-        const messageText = await page.evaluate(el => {
-          const textElement = el.querySelector('span.selectable-text');
-          return textElement ? textElement.textContent : '';
-        }, lastMessage);
-        
-        // Salvar mensagem no banco de dados
-        await db.run(`
-          INSERT INTO messages (phone, message, direction, timestamp, status)
-          VALUES (?, ?, 'received', datetime('now'), 'unread')
-        `, [phone, messageText]);
-        
-        // Verificar se precisa enviar resposta automática
-        const conversation = await db.get(`
-          SELECT * FROM conversations WHERE phone = ?
-        `, [phone]);
-        
-        if (conversation && conversation.awaiting_reply) {
-          // Enviar resposta automática
-          const autoReply = await db.get(`
-            SELECT value FROM settings WHERE key = 'auto_reply'
-          `);
-          
-          if (autoReply) {
-            await sendMessage(phone, autoReply.value);
-            
-            // Atualizar status da conversa
-            await db.run(`
-              UPDATE conversations 
-              SET awaiting_reply = 0, 
-                  last_interaction = datetime('now'),
-                  messages_sent = messages_sent + 1
-              WHERE phone = ?
-            `, [phone]);
-          }
-        }
-      }
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ success: false, message: 'Token não fornecido' });
     }
     
-  } catch (error) {
-    console.error('Error checking new messages:', error);
-  }
-}
-
-// Gerenciar início de novas conversas
-async function startConversationManager() {
-  console.log('Starting conversation manager...');
-  
-  // Verificar a cada 10 minutos se pode iniciar novas conversas
-  setInterval(async () => {
+    const token = authHeader.split(' ')[1];
+    
     try {
-      // Obter membros que ainda não foram contatados
-      const members = await db.all(`
-        SELECT m.phone, m.name 
-        FROM members m
-        LEFT JOIN conversations c ON m.phone = c.phone
-        WHERE c.phone IS NULL
-        LIMIT 1
-      `);
-      
-      if (members.length > 0) {
-        const member = members[0];
-        
-        // Verificar se já iniciou 5 conversas na última hora
-        const lastHourConversations = await db.get(`
-          SELECT COUNT(*) as count
-          FROM conversations
-          WHERE last_interaction >= datetime('now', '-1 hour')
-        `);
-        
-        if (lastHourConversations.count < 5) {
-          // Obter mensagens de saudação
-          const greetingsSetting = await db.get(`
-            SELECT value FROM settings WHERE key = 'greeting_messages'
-          `);
-          
-          if (greetingsSetting) {
-            const greetings = JSON.parse(greetingsSetting.value);
-            const randomGreeting = greetings[Math.floor(Math.random() * greetings.length)];
-            
-            // Iniciar conversa
-            await startChat(member.phone);
-            await sendMessage(member.phone, randomGreeting);
-            
-            // Registrar conversa
-            await db.run(`
-              INSERT INTO conversations (phone, status, last_interaction, messages_sent, awaiting_reply)
-              VALUES (?, 'active', datetime('now'), 1, 1)
-            `, [member.phone]);
-            
-            console.log(`Started conversation with ${member.phone}`);
-          }
-        }
-      }
+        const decoded = jwt.verify(token, JWT_SECRET);
+        req.user = decoded;
+        next();
     } catch (error) {
-      console.error('Error in conversation manager:', error);
+        return res.status(401).json({ success: false, message: 'Token inválido' });
     }
-  }, 10 * 60 * 1000); // 10 minutos
-}
+};
 
-// Iniciar chat com um contato
-async function startChat(phone) {
-  try {
-    // Abrir URL direta do contato
-    await page.goto(`https://web.whatsapp.com/send?phone=${phone}`, {
-      waitUntil: 'networkidle2'
-    });
-    
-    // Esperar o chat carregar
-    await page.waitForSelector('div[data-testid="conversation-panel-wrapper"]', {
-      timeout: 30000
-    });
-    
-    return true;
-  } catch (error) {
-    console.error(`Error starting chat with ${phone}:`, error);
-    return false;
-  }
-}
-
-// Enviar mensagem para um contato
-async function sendMessage(phone, message) {
-  try {
-    // Garantir que o chat está aberto
-    const isChatOpen = await page.$('div[data-testid="conversation-panel-wrapper"]');
-    if (!isChatOpen) {
-      await startChat(phone);
-    }
-    
-    // Clicar no campo de mensagem e digitar
-    const inputSelector = 'div[data-testid="conversation-compose-box-input"]';
-    await page.waitForSelector(inputSelector, { timeout: 30000 });
-    await page.click(inputSelector);
-    await page.type(inputSelector, message);
-    
-    // Clicar no botão de enviar
-    await page.click('span[data-testid="send"]');
-    await page.waitForTimeout(1000);
-    
-    // Registrar a mensagem no banco de dados
-    await db.run(`
-      INSERT INTO messages (phone, message, direction, timestamp, status)
-      VALUES (?, ?, 'sent', datetime('now'), 'sent')
-    `, [phone, message]);
-    
-    return true;
-  } catch (error) {
-    console.error(`Error sending message to ${phone}:`, error);
-    return false;
-  }
-}
-
-// Enviar arquivo para um contato
-async function sendFile(phone, filePath, caption = '') {
-  try {
-    // Garantir que o chat está aberto
-    const isChatOpen = await page.$('div[data-testid="conversation-panel-wrapper"]');
-    if (!isChatOpen) {
-      await startChat(phone);
-    }
-    
-    // Clicar no ícone de anexar
-    await page.click('span[data-testid="clip"]');
-    await page.waitForTimeout(500);
-    
-    // Preparar para o diálogo de upload de arquivo
-    const [fileChooser] = await Promise.all([
-      page.waitForFileChooser(),
-      page.click('span[data-testid="attach-document"]')
-    ]);
-    
-    // Selecionar arquivo
-    await fileChooser.accept([filePath]);
-    
-    // Adicionar legenda se fornecida
-    if (caption) {
-      await page.waitForSelector('div[data-testid="media-caption-input-container"]');
-      await page.type('div[data-testid="media-caption-input-container"]', caption);
-    }
-    
-    // Enviar
-    await page.click('span[data-testid="send"]');
-    await page.waitForTimeout(3000);
-    
-    // Registrar a mensagem no banco de dados
-    await db.run(`
-      INSERT INTO messages (phone, message, direction, timestamp, status)
-      VALUES (?, ?, 'sent', datetime('now'), 'sent')
-    `, [phone, `[Arquivo] ${caption}`]);
-    
-    return true;
-  } catch (error) {
-    console.error(`Error sending file to ${phone}:`, error);
-    return false;
-  }
-}
-
-// Obter membros de um grupo
-async function getGroupMembers(groupName) {
-  try {
-    // Buscar o grupo na lista de chats
-    const groupElements = await page.$$('span.ggj6brxn[title]');
-    let groupFound = false;
-    
-    for (const element of groupElements) {
-      const title = await page.evaluate(el => el.getAttribute('title'), element);
-      if (title === groupName) {
-        await element.click();
-        groupFound = true;
-        break;
-      }
-    }
-    
-    if (!groupFound) {
-      return { success: false, message: 'Grupo não encontrado' };
-    }
-    
-    // Clicar nas informações do grupo
-    await page.waitForSelector('span[data-testid="conversation-info-header-chat-title"]');
-    await page.click('span[data-testid="conversation-info-header-chat-title"]');
-    
-    // Extrair membros
-    await page.waitForSelector('div[data-testid="contact-list-wrapper"]');
-    
-    const members = await page.evaluate(() => {
-      const memberElements = document.querySelectorAll('div[data-testid="contact-list-wrapper"] span[title]');
-      return Array.from(memberElements).map(el => ({
-        name: el.getAttribute('title'),
-        phone: el.closest('[data-testid="cell-frame-container"]')?.getAttribute('data-testid')?.replace('cell-frame-container-', '') || ''
-      }));
-    });
-    
-    // Salvar membros no banco de dados
-    for (const member of members) {
-      // Pular admins e números de telefone inválidos
-      if (!member.phone || member.phone.includes('admin')) continue;
-      
-      await db.run(`
-        INSERT OR IGNORE INTO members (phone, name, group_name)
-        VALUES (?, ?, ?)
-      `, [member.phone, member.name, groupName]);
-    }
-    
-    return { success: true, members };
-  } catch (error) {
-    console.error('Error getting group members:', error);
-    return { success: false, message: error.message };
-  }
-}
-
-// Enviar mensagem em massa para todos os membros de um grupo
-async function bulkSendToGroup(groupName, message, filePath = null) {
-  try {
-    // Obter membros do grupo do banco de dados
-    const members = await db.all(`
-      SELECT phone FROM members WHERE group_name = ?
-    `, [groupName]);
-    
-    if (members.length === 0) {
-      return { success: false, message: 'Nenhum membro encontrado para este grupo' };
-    }
-    
-    let successCount = 0;
-    
-    // Enviar mensagem para cada membro com intervalo
-    for (const member of members) {
-      if (filePath) {
-        await sendFile(member.phone, filePath, message);
-      } else {
-        await sendMessage(member.phone, message);
-      }
-      
-      successCount++;
-      
-      // Esperar 10 segundos entre envios
-      await new Promise(resolve => setTimeout(resolve, 10000));
-    }
-    
-    return { 
-      success: true, 
-      message: `Mensagem enviada com sucesso para ${successCount} de ${members.length} membros`
-    };
-  } catch (error) {
-    console.error('Error in bulk sending:', error);
-    return { success: false, message: error.message };
-  }
-}
+// Servir arquivos estáticos da raiz
+app.use(express.static('./'));
 
 // Rotas da API
-app.get('/api/status', async (req, res) => {
-  res.json({
-    status: 'online',
-    loggedIn: isLoggedIn
-  });
-});
 
-app.get('/api/groups', async (req, res) => {
-  try {
-    const groups = await db.all(`
-      SELECT DISTINCT group_name FROM members
-    `);
-    res.json(groups);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.get('/api/group/:name/members', async (req, res) => {
-  try {
-    const { name } = req.params;
+// Busca no YouTube
+app.get('/api/search', async (req, res) => {
+    const query = req.query.q;
     
-    // Se o grupo não existe no banco de dados, buscar do WhatsApp
-    const existingGroup = await db.get(`
-      SELECT COUNT(*) as count FROM members WHERE group_name = ?
-    `, [name]);
-    
-    if (existingGroup.count === 0) {
-      const result = await getGroupMembers(name);
-      if (!result.success) {
-        return res.status(404).json({ error: result.message });
-      }
+    if (!query) {
+        return res.status(400).json({ error: 'Parâmetro de busca não fornecido' });
     }
     
-    const members = await db.all(`
-      SELECT * FROM members WHERE group_name = ?
-    `, [name]);
-    
-    res.json(members);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    try {
+        // Registrar ou atualizar o termo de busca no banco de dados
+        const existingSearch = await db.get('SELECT * FROM searches WHERE term = ?', [query]);
+        
+        if (existingSearch) {
+            await db.run('UPDATE searches SET count = count + 1, last_searched = CURRENT_TIMESTAMP WHERE id = ?', [existingSearch.id]);
+        } else {
+            await db.run('INSERT INTO searches (term) VALUES (?)', [query]);
+        }
+        
+        // Registrar atividade
+        await db.run('INSERT INTO activities (type, details) VALUES (?, ?)', 
+            ['search', `Busca por: ${query}`]);
+        
+        // Esta é uma simulação de resultados para não depender da API real do YouTube
+        // Em um cenário real, você usaria a API oficial do YouTube ou ytsr (YouTube Search)
+        const mockResults = [
+            {
+                videoId: 'dQw4w9WgXcQ',
+                title: `Resultado para "${query}" - Música Popular 1`,
+                thumbnail: 'https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg'
+            },
+            {
+                videoId: 'hT_nvWreIhg',
+                title: `Resultado para "${query}" - Música Popular 2`,
+                thumbnail: 'https://i.ytimg.com/vi/hT_nvWreIhg/mqdefault.jpg'
+            },
+            {
+                videoId: 'JGwWNGJdvx8',
+                title: `Resultado para "${query}" - Música Popular 3`,
+                thumbnail: 'https://i.ytimg.com/vi/JGwWNGJdvx8/mqdefault.jpg'
+            },
+            {
+                videoId: 'RgKAFK5djSk',
+                title: `Resultado para "${query}" - Vídeo Popular 1`,
+                thumbnail: 'https://i.ytimg.com/vi/RgKAFK5djSk/mqdefault.jpg'
+            },
+            {
+                videoId: 'kJQP7kiw5Fk',
+                title: `Resultado para "${query}" - Vídeo Popular 2`,
+                thumbnail: 'https://i.ytimg.com/vi/kJQP7kiw5Fk/mqdefault.jpg'
+            },
+            {
+                videoId: 'YqeW9_5kURI',
+                title: `Resultado para "${query}" - Música Recente 1`,
+                thumbnail: 'https://i.ytimg.com/vi/YqeW9_5kURI/mqdefault.jpg'
+            }
+        ];
+        
+        res.json(mockResults);
+        
+    } catch (error) {
+        console.error('Erro na busca:', error);
+        res.status(500).json({ error: 'Erro ao processar a busca' });
+    }
 });
 
-app.post('/api/refresh-group/:name', async (req, res) => {
-  try {
-    const { name } = req.params;
-    const result = await getGroupMembers(name);
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.post('/api/send-message', async (req, res) => {
-  try {
-    const { phone, message } = req.body;
+// Download de vídeo/áudio
+app.get('/api/download', async (req, res) => {
+    const { id, format } = req.query;
     
-    if (!phone || !message) {
-      return res.status(400).json({ error: 'Telefone e mensagem são obrigatórios' });
+    if (!id || !format || (format !== 'mp3' && format !== 'mp4')) {
+        return res.status(400).json({ error: 'Parâmetros inválidos' });
     }
     
-    const result = await sendMessage(phone, message);
-    res.json({ success: result });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    try {
+        // Registrar o download
+        await db.run('INSERT INTO downloads (video_id, format) VALUES (?, ?)', [id, format]);
+        
+        // Registrar atividade
+        await db.run('INSERT INTO activities (type, details) VALUES (?, ?)', 
+            ['download', `Download de ${id} em formato ${format}`]);
+        
+        // Em um ambiente real, você utilizaria o ytdl-core para processar o download
+        // Aqui, vamos simular o processo retornando um arquivo mock
+        
+        if (format === 'mp3') {
+            res.setHeader('Content-Disposition', `attachment; filename="${id}.mp3"`);
+            res.setHeader('Content-Type', 'audio/mpeg');
+            
+            // Simular um arquivo MP3
+            // No ambiente real, você utilizaria ytdl-core.downloadFromInfo()
+            const mockAudioBuffer = Buffer.alloc(1024 * 1024); // 1MB buffer
+            mockAudioBuffer.fill(0);
+            res.send(mockAudioBuffer);
+        } else { // mp4
+            res.setHeader('Content-Disposition', `attachment; filename="${id}.mp4"`);
+            res.setHeader('Content-Type', 'video/mp4');
+            
+            // Simular um arquivo MP4
+            const mockVideoBuffer = Buffer.alloc(2 * 1024 * 1024); // 2MB buffer
+            mockVideoBuffer.fill(0);
+            res.send(mockVideoBuffer);
+        }
+    } catch (error) {
+        console.error('Erro no download:', error);
+        res.status(500).json({ error: 'Erro ao processar o download' });
+    }
 });
 
-app.post('/api/send-file', async (req, res) => {
-  try {
-    const { phone, filePath, caption } = req.body;
+// Rotas para anúncios
+app.get('/api/ads/random', async (req, res) => {
+    const page = req.query.page || 'home';
     
-    if (!phone || !filePath) {
-      return res.status(400).json({ error: 'Telefone e caminho do arquivo são obrigatórios' });
+    try {
+        // Buscar um anúncio aleatório ativo para a página especificada
+        const ad = await db.get('SELECT * FROM ads WHERE page = ? AND status = "active" ORDER BY RANDOM() LIMIT 1', [page]);
+        
+        if (!ad) {
+            return res.json(null);
+        }
+        
+        res.json(ad);
+    } catch (error) {
+        console.error('Erro ao buscar anúncio:', error);
+        res.status(500).json({ error: 'Erro ao buscar anúncio' });
+    }
+});
+
+// Registrar visualização de anúncio
+app.post('/api/stats/ad-view', async (req, res) => {
+    const { adId } = req.body;
+    
+    if (!adId) {
+        return res.status(400).json({ error: 'ID do anúncio não fornecido' });
     }
     
-    const result = await sendFile(phone, filePath, caption || '');
-    res.json({ success: result });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    try {
+        // Verificar se já existe estatística para este anúncio
+        const stat = await db.get('SELECT * FROM ad_stats WHERE ad_id = ?', [adId]);
+        
+        if (stat) {
+            await db.run('UPDATE ad_stats SET view_count = view_count + 1, last_updated = CURRENT_TIMESTAMP WHERE ad_id = ?', [adId]);
+        } else {
+            await db.run('INSERT INTO ad_stats (ad_id, view_count) VALUES (?, 1)', [adId]);
+        }
+        
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Erro ao registrar visualização:', error);
+        res.status(500).json({ error: 'Erro ao registrar visualização' });
+    }
 });
 
-app.post('/api/bulk-send', async (req, res) => {
-  try {
-    const { groupName, message, filePath } = req.body;
+// Registrar clique em anúncio
+app.post('/api/stats/ad-click', async (req, res) => {
+    const { adId } = req.body;
     
-    if (!groupName || !message) {
-      return res.status(400).json({ error: 'Nome do grupo e mensagem são obrigatórios' });
+    if (!adId) {
+        return res.status(400).json({ error: 'ID do anúncio não fornecido' });
     }
     
-    const result = await bulkSendToGroup(groupName, message, filePath);
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    try {
+        // Verificar se já existe estatística para este anúncio
+        const stat = await db.get('SELECT * FROM ad_stats WHERE ad_id = ?', [adId]);
+        
+        if (stat) {
+            await db.run('UPDATE ad_stats SET click_count = click_count + 1, last_updated = CURRENT_TIMESTAMP WHERE ad_id = ?', [adId]);
+        } else {
+            await db.run('INSERT INTO ad_stats (ad_id, click_count) VALUES (?, 1)', [adId]);
+        }
+        
+        // Registrar atividade
+        await db.run('INSERT INTO activities (type, details) VALUES (?, ?)', 
+            ['ad_click', `Clique no anúncio ID ${adId}`]);
+        
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Erro ao registrar clique:', error);
+        res.status(500).json({ error: 'Erro ao registrar clique' });
+    }
 });
 
-app.get('/api/messages/:phone', async (req, res) => {
-  try {
-    const { phone } = req.params;
-    const messages = await db.all(`
-      SELECT * FROM messages WHERE phone = ? ORDER BY timestamp
-    `, [phone]);
+// Registrar clique em botão de download
+app.post('/api/stats/download-click', async (req, res) => {
+    const { videoId, format } = req.body;
     
-    res.json(messages);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.get('/api/settings', async (req, res) => {
-  try {
-    const settings = await db.all(`SELECT * FROM settings`);
-    
-    // Converter para formato mais amigável
-    const formattedSettings = {};
-    for (const setting of settings) {
-      try {
-        formattedSettings[setting.key] = JSON.parse(setting.value);
-      } catch (e) {
-        formattedSettings[setting.key] = setting.value;
-      }
+    if (!videoId || !format) {
+        return res.status(400).json({ error: 'Informações incompletas' });
     }
     
-    res.json(formattedSettings);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    try {
+        // Registrar atividade
+        await db.run('INSERT INTO activities (type, details) VALUES (?, ?)', 
+            ['download_click', `Clique para download de ${videoId} em formato ${format}`]);
+        
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Erro ao registrar clique em download:', error);
+        res.status(500).json({ error: 'Erro ao registrar estatística' });
+    }
 });
 
-app.post('/api/settings', async (req, res) => {
-  try {
-    const { key, value } = req.body;
+// Rotas de administração
+
+// Login
+app.post('/api/admin/login', async (req, res) => {
+    const { username, password } = req.body;
     
-    if (!key || value === undefined) {
-      return res.status(400).json({ error: 'Chave e valor são obrigatórios' });
+    if (!username || !password) {
+        return res.status(400).json({ success: false, message: 'Usuário e senha são obrigatórios' });
     }
     
-    const stringValue = typeof value === 'object' ? JSON.stringify(value) : value;
-    
-    await db.run(`
-      INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)
-    `, [key, stringValue]);
-    
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    try {
+        const hashedPassword = crypto.createHash('sha256').update(password).digest('hex');
+        const user = await db.get('SELECT * FROM admin_users WHERE username = ? AND password = ?', [username, hashedPassword]);
+        
+        if (!user) {
+            return res.status(401).json({ success: false, message: 'Credenciais inválidas' });
+        }
+        
+        // Gerar token JWT
+        const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '24h' });
+        
+        res.json({ success: true, token });
+    } catch (error) {
+        console.error('Erro no login:', error);
+        res.status(500).json({ success: false, message: 'Erro no servidor' });
+    }
 });
 
-// Inicializar servidor
+// Verificar token
+app.get('/api/admin/verify', authenticate, (req, res) => {
+    res.json({ success: true, user: req.user });
+});
+
+// Dashboard
+app.get('/api/admin/dashboard', authenticate, async (req, res) => {
+    try {
+        // Total de anúncios
+        const totalAds = await db.get('SELECT COUNT(*) as count FROM ads');
+        
+        // Visualizações hoje
+        const todayViews = await db.get(`
+            SELECT SUM(view_count) as count FROM ad_stats 
+            WHERE date(last_updated) = date('now')
+        `);
+        
+        // Cliques hoje
+        const todayClicks = await db.get(`
+            SELECT SUM(click_count) as count FROM ad_stats 
+            WHERE date(last_updated) = date('now')
+        `);
+        
+        // Downloads hoje
+        const todayDownloads = await db.get(`
+            SELECT COUNT(*) as count FROM downloads 
+            WHERE date(timestamp) = date('now')
+        `);
+        
+        // Atividade recente
+        const recentActivity = await db.all(`
+            SELECT * FROM activities 
+            ORDER BY timestamp DESC 
+            LIMIT 10
+        `);
+        
+        res.json({
+            totalAds: totalAds.count || 0,
+            todayViews: todayViews.count || 0,
+            todayClicks: todayClicks.count || 0,
+            todayDownloads: todayDownloads.count || 0,
+            recentActivity
+        });
+    } catch (error) {
+        console.error('Erro ao buscar dados do dashboard:', error);
+        res.status(500).json({ error: 'Erro ao buscar dados do dashboard' });
+    }
+});
+
+// Listar anúncios
+app.get('/api/admin/ads', authenticate, async (req, res) => {
+    const typeFilter = req.query.type || 'all';
+    const pageFilter = req.query.page || 'all';
+    
+    try {
+        let query = 'SELECT ads.*, COALESCE(ad_stats.view_count, 0) as views, COALESCE(ad_stats.click_count, 0) as clicks FROM ads LEFT JOIN ad_stats ON ads.id = ad_stats.ad_id';
+        const params = [];
+        
+        if (typeFilter !== 'all' || pageFilter !== 'all') {
+            query += ' WHERE';
+            
+            if (typeFilter !== 'all') {
+                query += ' ads.type = ?';
+                params.push(typeFilter);
+            }
+            
+            if (typeFilter !== 'all' && pageFilter !== 'all') {
+                query += ' AND';
+            }
+            
+            if (pageFilter !== 'all') {
+                query += ' ads.page = ?';
+                params.push(pageFilter);
+            }
+        }
+        
+        query += ' ORDER BY ads.id DESC';
+        
+        const ads = await db.all(query, params);
+        res.json(ads);
+    } catch (error) {
+        console.error('Erro ao listar anúncios:', error);
+        res.status(500).json({ error: 'Erro ao listar anúncios' });
+    }
+});
+
+// Adicionar anúncio
+app.post('/api/admin/ads', authenticate, upload.single('file'), async (req, res) => {
+    try {
+        const { type, page, position, status, link } = req.body;
+        
+        if (!type || !page || !position) {
+            return res.status(400).json({ success: false, message: 'Informações incompletas' });
+        }
+        
+        let content = '';
+        
+        if (type === 'iframe') {
+            content = req.body.content;
+            if (!content) {
+                return res.status(400).json({ success: false, message: 'Código iframe não fornecido' });
+            }
+        } else {
+            // Para outros tipos, deve haver um arquivo
+            if (!req.file) {
+                return res.status(400).json({ success: false, message: 'Arquivo não fornecido' });
+            }
+            content = req.file.filename;
+        }
+        
+        // Inserir anúncio no banco de dados
+        const result = await db.run(
+            'INSERT INTO ads (type, content, link, page, position, status) VALUES (?, ?, ?, ?, ?, ?)',
+            [type, content, link || null, page, position, status || 'active']
+        );
+        
+        // Criar entrada para estatísticas
+        await db.run('INSERT INTO ad_stats (ad_id) VALUES (?)', [result.lastID]);
+        
+        // Registrar atividade
+        await db.run('INSERT INTO activities (type, details) VALUES (?, ?)', 
+            ['ad_create', `Novo anúncio criado do tipo ${type} para a página ${page}`]);
+        
+        res.json({ success: true, id: result.lastID });
+    } catch (error) {
+        console.error('Erro ao adicionar anúncio:', error);
+        res.status(500).json({ success: false, message: 'Erro ao adicionar anúncio' });
+    }
+});
+
+// Alterar status do anúncio
+app.patch('/api/admin/ads/:id/status', authenticate, async (req, res) => {
+    const { id } = req.params;
+    const { status } = req.body;
+    
+    if (!status || (status !== 'active' && status !== 'inactive')) {
+        return res.status(400).json({ success: false, message: 'Status inválido' });
+    }
+    
+    try {
+        await db.run('UPDATE ads SET status = ? WHERE id = ?', [status, id]);
+        
+        // Registrar atividade
+        await db.run('INSERT INTO activities (type, details) VALUES (?, ?)', 
+            ['ad_status', `Anúncio ID ${id} alterado para ${status}`]);
+        
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Erro ao alterar status:', error);
+        res.status(500).json({ success: false, message: 'Erro ao alterar status' });
+    }
+});
+
+// Excluir anúncio
+app.delete('/api/admin/ads/:id', authenticate, async (req, res) => {
+    const { id } = req.params;
+    
+    try {
+        // Primeiro, verificar se o anúncio existe e obter seu conteúdo
+        const ad = await db.get('SELECT * FROM ads WHERE id = ?', [id]);
+        
+        if (!ad) {
+            return res.status(404).json({ success: false, message: 'Anúncio não encontrado' });
+        }
+        
+        // Excluir o anúncio do banco de dados
+        await db.run('DELETE FROM ads WHERE id = ?', [id]);
+        
+        // Se for um arquivo (não iframe), excluir o arquivo
+        if (ad.type !== 'iframe' && fs.existsSync(ad.content)) {
+            await unlinkAsync(ad.content);
+        }
+        
+        // Registrar atividade
+        await db.run('INSERT INTO activities (type, details) VALUES (?, ?)', 
+            ['ad_delete', `Anúncio ID ${id} excluído`]);
+        
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Erro ao excluir anúncio:', error);
+        res.status(500).json({ success: false, message: 'Erro ao excluir anúncio' });
+    }
+});
+
+// Estatísticas
+app.get('/api/admin/statistics', authenticate, async (req, res) => {
+    const period = req.query.period || 'all';
+    
+    try {
+        let dateFilter = '';
+        
+        // Configurar filtro de data com base no período
+        if (period === 'today') {
+            dateFilter = "WHERE date(last_updated) = date('now')";
+        } else if (period === 'week') {
+            dateFilter = "WHERE date(last_updated) >= date('now', '-7 days')";
+        } else if (period === 'month') {
+            dateFilter = "WHERE date(last_updated) >= date('now', '-30 days')";
+        }
+        
+        // Top anúncios por CTR
+        const topAds = await db.all(`
+            SELECT ads.id, ads.type, ads.content, ad_stats.view_count as views, ad_stats.click_count as clicks
+            FROM ads 
+            JOIN ad_stats ON ads.id = ad_stats.ad_id
+            ${dateFilter}
+            ORDER BY (CAST(ad_stats.click_count AS REAL) / CASE WHEN ad_stats.view_count = 0 THEN 1 ELSE ad_stats.view_count END) DESC, ad_stats.view_count DESC
+            LIMIT 5
+        `);
+        
+        // Top buscas
+        const topSearches = await db.all(`
+            SELECT searches.term, searches.count,
+                (SELECT COUNT(*) FROM downloads WHERE date(downloads.timestamp) >= date(searches.last_searched, '-30 days')) as downloads
+            FROM searches
+            ORDER BY searches.count DESC
+            LIMIT 10
+        `);
+        
+        res.json({
+            topAds,
+            topSearches
+        });
+    } catch (error) {
+        console.error('Erro ao buscar estatísticas:', error);
+        res.status(500).json({ error: 'Erro ao buscar estatísticas' });
+    }
+});
+
+// Inicializar banco de dados e iniciar servidor
 async function startServer() {
-  try {
-    await initializeDatabase();
-    await initializePuppeteer();
-    
-    app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
-    });
-  } catch (error) {
-    console.error('Error starting server:', error);
-    process.exit(1);
-  }
+    try {
+        await initializeDatabase();
+        
+        app.listen(PORT, () => {
+            console.log(`Servidor rodando na porta ${PORT}`);
+        });
+    } catch (error) {
+        console.error('Erro ao inicializar o servidor:', error);
+        process.exit(1);
+    }
 }
 
-// Fechamento gracioso
-process.on('SIGINT', async () => {
-  console.log('Shutting down server...');
-  
-  clearInterval(qrCheckInterval);
-  
-  if (browser) {
-    await browser.close();
-  }
-  
-  if (db) {
-    await db.close();
-  }
-  
-  process.exit(0);
-});
-
-// Iniciar servidor
 startServer();
