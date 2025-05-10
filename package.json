@@ -1,7 +1,7 @@
 {
   "name": "candlestine-play-music",
   "version": "1.0.0",
-  "description": "Plataforma moçambicana para buscar, converter e baixar músicas e vídeos do YouTube.",
+  "description": "Plataforma moçambicana para buscar, converter e baixar músicas e vídeos do YouTube usando yt-dlp.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -10,9 +10,12 @@
   "keywords": [
     "youtube",
     "downloader",
+    "converter",
+    "yt-dlp",
     "mp3",
     "mp4",
     "music",
+    "video",
     "mozambique"
   ],
   "author": "Candlestine AI Prompt",
@@ -23,8 +26,7 @@
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "mongodb": "^6.3.0",
-    "mongoose": "^8.0.0",
-    "ytdl-core": "^4.11.5"
+    "mongoose": "^8.0.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
