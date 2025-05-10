@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="pt-MZ">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Download - Candlestine Play Music</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&family=Inter:wght@300;400;600;700&family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+     <style>
+        body { font-family: 'Poppins', 'Inter', 'Roboto', sans-serif; }
+    </style>
+</head>
+<body class="bg-black text-white min-h-screen flex flex-col">
+
+    <header class="py-6 px-4 md:px-8 bg-black bg-opacity-80 backdrop-blur-md">
+        <div class="container mx-auto flex justify-between items-center">
+            <a href="index.html" class="text-3xl font-bold font-poppins">Candlestine <span class="text-red-500">Play</span> Music</a>
+        </div>
+    </header>
+
+    <main class="container mx-auto px-4 md:px-8 py-10 flex-grow">
+        <section id="download-info" class="max-w-2xl mx-auto bg-gray-800 p-8 rounded-lg shadow-xl">
+            <h2 class="text-3xl font-semibold mb-6 text-center font-poppins">Preparando seu Download</h2>
+            
+            <div id="video-details" class="mb-8 text-center">
+                <img id="video-thumbnail" src="" alt="Thumbnail do Vídeo" class="w-full max-w-md mx-auto rounded-lg mb-4 shadow-md">
+                <h3 id="video-title" class="text-xl font-medium">Carregando título...</h3>
+            </div>
+
+            <div id="download-options" class="text-center">
+                <p class="text-gray-400 mb-2">Seu download para <strong id="selected-format" class="text-red-500"></strong> está quase pronto.</p>
+                <p id="status-message" class="text-lg mb-6">Processando, por favor aguarde...</p>
+                
+                <button id="download-button"
+                        class="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-8 rounded-lg text-lg transition duration-150 opacity-50 cursor-not-allowed"
+                        disabled>
+                    Download <span id="format-label-button"></span>
+                </button>
+                <a id="direct-download-link" href="#" class="hidden">Link Direto (teste)</a>
+
+                <p id="error-message-download" class="text-red-500 mt-4 hidden"></p>
+            </div>
+            <div class="mt-6 text-center">
+                <a href="index.html" class="text-red-400 hover:text-red-300">← Voltar para a busca</a>
+            </div>
+        </section>
+        <div id="ad-body-bottom-download" class="my-8 ad-placeholder"></div>
+    </main>
+
+    <footer class="bg-gray-900 text-gray-400 py-8 px-4 md:px-8 text-center">
+         <div id="ad-footer-download" class="mb-4 ad-placeholder"></div>
+        <p>© <span id="current-year-download"></span> Candlestine Play Music. Todos os direitos reservados.</p>
+    </footer>
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('current-year-download').textContent = new Date().getFullYear();
+            const params = new URLSearchParams(window.location.search);
+            const videoId = params.get('videoId');
+            const format = params.get('format');
+            const title = decodeURIComponent(params.get('title') || 'Vídeo');
+            const thumbnailUrl = decodeURIComponent(params.get('thumbnail') || '');
+
+            const videoThumbnailElement = document.getElementById('video-thumbnail');
+            const videoTitleElement = document.getElementById('video-title');
+            const selectedFormatElement = document.getElementById('selected-format');
+            const statusMessageElement = document.getElementById('status-message');
+            const downloadButton = document.getElementById('download-button');
+            const formatLabelButton = document.getElementById('format-label-button');
+            const errorMessageDownload = document.getElementById('error-message-download');
+            // const directDownloadLink = document.getElementById('direct-download-link');
+
+
+            if (thumbnailUrl) {
+                videoThumbnailElement.src = thumbnailUrl;
+            } else {
+                videoThumbnailElement.classList.add('hidden'); // Hide if no thumbnail
+            }
+            videoTitleElement.textContent = title;
+            selectedFormatElement.textContent = format.toUpperCase();
+            formatLabelButton.textContent = format.toUpperCase();
+
+            if (!videoId || !format) {
+                statusMessageElement.textContent = 'Erro: Informações inválidas para download.';
+                errorMessageDownload.textContent = 'ID do vídeo ou formato ausente. Por favor, tente novamente a partir da página inicial.';
+                errorMessageDownload.classList.remove('hidden');
+                downloadButton.disabled = true;
+                return;
+            }
+
+            statusMessageElement.textContent = `Iniciando o preparo do seu ${format.toUpperCase()}...`;
+            
+            // The actual download will be initiated by the browser when clicking the button
+            // The button will link to the backend /api/download endpoint
+            const downloadUrl = `/api/download?videoId=${videoId}&format=${format}`;
+            // directDownloadLink.href = downloadUrl; // For testing
+
+            downloadButton.addEventListener('click', () => {
+                statusMessageElement.textContent = `Baixando ${title}.${format}... Por favor, não feche esta janela.`;
+                downloadButton.textContent = 'Baixando...';
+                downloadButton.disabled = true;
+                // The download is triggered by navigating to the backend URL
+                // which will then stream the file.
+                window.location.href = downloadUrl;
+
+                // It's hard to know when the download truly finishes on the client-side this way.
+                // We can re-enable the button after a timeout, assuming the download started.
+                setTimeout(() => {
+                    statusMessageElement.textContent = 'Se o download não iniciou, tente clicar novamente.';
+                    downloadButton.textContent = `Download ${format.toUpperCase()}`;
+                    downloadButton.disabled = false;
+                }, 15000); // Re-enable after 15 seconds
+            });
+
+            // Enable the button once page is loaded
+            downloadButton.disabled = false;
+            downloadButton.classList.remove('opacity-50', 'cursor-not-allowed');
+            statusMessageElement.textContent = `Pronto para baixar ${title} como ${format.toUpperCase()}.`;
+
+
+            // --- Ad Loading for Download Page ---
+            const adPlaceholdersDownload = {
+                footer: document.getElementById('ad-footer-download'),
+                body_bottom: document.getElementById('ad-body-bottom-download')
+            };
+
+            async function recordAdEvent(adId, type) {
+                // This function might be duplicated or should be in a shared utility if project grows
+                if (!adId) return;
+                try {
+                    await fetch('/api/stats/record', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ adId, type })
+                    });
+                } catch (error) {
+                    console.error('Failed to record ad event:', error);
+                }
+            }
+
+            function displayAd(adData, placeholderElement) {
+                if (!adData || !placeholderElement) return;
+                placeholderElement.innerHTML = '';
+                placeholderElement.dataset.adId = adData._id;
+                let adContent = '';
+                if (adData.type === 'image') adContent = `<a href="${adData.url}" target="_blank" data-ad-id="${adData._id}" class="ad-link"><img src="${adData.url}" alt="${adData.title}" class="max-w-full h-auto rounded"></a>`;
+                else if (adData.type === 'gif') adContent = `<a href="#" data-ad-id="${adData._id}" class="ad-link"><img src="${adData.url}" alt="${adData.title}" class="max-w-full h-auto rounded"></a>`;
+                else if (adData.type === 'video') adContent = `<video controls src="${adData.url}" class="max-w-full rounded"></video>`;
+                else if (adData.type === 'iframe') {
+                    if (adData.url.includes("<iframe")) adContent = adData.url;
+                    else adContent = `<iframe src="${adData.url}" frameborder="0" allowfullscreen class="w-full h-64 rounded"></iframe>`;
+                }
+                const adWarning = `<p class="ad-warning">Este é um anúncio.</p>`;
+                placeholderElement.innerHTML = adContent + adWarning;
+                recordAdEvent(adData._id, 'view');
+                const adLink = placeholderElement.querySelector('.ad-link');
+                if (adLink) {
+                    adLink.addEventListener('click', () => recordAdEvent(adLink.dataset.adId, 'click'));
+                }
+            }
+
+            async function fetchAndDisplayAdsDownload() {
+                for (const position in adPlaceholdersDownload) {
+                    if (adPlaceholdersDownload[position]) {
+                        try {
+                            const response = await fetch(`/api/ads/serve?position=${position}`);
+                            if (response.ok) {
+                                const adData = await response.json();
+                                if (adData && adData._id) {
+                                   displayAd(adData, adPlaceholdersDownload[position]);
+                                }
+                            }
+                        } catch (error) {
+                            console.error(`Failed to load ad for ${position} on download page:`, error);
+                        }
+                    }
+                }
+            }
+            fetchAndDisplayAdsDownload();
+        });
+    </script>
+</body>
+</html>

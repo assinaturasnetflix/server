@@ -1,50 +1,94 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="pt-MZ">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TubeDownloader - Baixe músicas e vídeos do YouTube</title>
+    <title>Candlestine Play Music - Baixe Músicas e Vídeos</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&family=Inter:wght@300;400;600;700&family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
+    <style>
+        /* For Poppins as primary, Inter/Roboto as fallback */
+        body { font-family: 'Poppins', 'Inter', 'Roboto', sans-serif; }
+        .font-poppins { font-family: 'Poppins', sans-serif; }
+        .font-inter { font-family: 'Inter', sans-serif; }
+        .font-roboto { font-family: 'Roboto', sans-serif; }
+    </style>
 </head>
-<body>
-    <div id="ad-modal" class="ad-container">
-        <div class="ad-content">
-            <div id="ad-display"></div>
-            <button id="close-ad">Fechar [5s]</button>
-        </div>
-    </div>
+<body class="bg-black text-white min-h-screen flex flex-col">
 
-    <header>
-        <div class="logo">
-            <h1>Tube<span>Downloader</span></h1>
+    <header class="py-6 px-4 md:px-8 sticky top-0 bg-black bg-opacity-80 backdrop-blur-md z-50">
+        <div class="container mx-auto flex justify-between items-center">
+            <h1 class="text-3xl font-bold font-poppins">Candlestine <span class="text-red-500">Play</span> Music</h1>
+            <nav>
+                <a href="#popular" class="text-gray-300 hover:text-white px-3">Populares</a>
+                <a href="admin.html" class="text-gray-300 hover:text-white px-3">Admin</a>
+            </nav>
         </div>
-        <div class="header-ad" id="header-ad"></div>
     </header>
 
-    <main>
-        <section class="search-section">
-            <div class="search-container">
-                <input type="text" id="search-input" placeholder="Pesquise músicas ou vídeos...">
-                <button id="search-button">Buscar</button>
+    <main class="container mx-auto px-4 md:px-8 py-10 flex-grow">
+        <section id="search-section" class="text-center mb-16">
+            <h2 class="text-4xl md:text-5xl font-semibold mb-6 font-poppins">Encontre sua Música ou Vídeo Favorito</h2>
+            <p class="text-gray-400 mb-8 max-w-2xl mx-auto">
+                Busque, converta e baixe do YouTube de forma simples e rápida. MP3 e MP4 com a melhor qualidade.
+            </p>
+            <form id="search-form" class="max-w-2xl mx-auto flex">
+                <input type="text" id="search-query"
+                       class="w-full px-6 py-4 text-lg bg-gray-800 border border-gray-700 rounded-l-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none placeholder-gray-500 text-white"
+                       placeholder="Digite o nome da música, artista ou link do YouTube...">
+                <button type="submit"
+                        class="bg-red-600 hover:bg-red-700 text-white font-semibold px-8 py-4 text-lg rounded-r-lg transition duration-150">
+                    Buscar
+                </button>
+            </form>
+        </section>
+
+        <div id="ad-body-top" class="my-6 ad-placeholder"></div>
+
+        <section id="results-section" class="mb-16">
+            <h3 class="text-2xl font-semibold mb-6 font-poppins sr-only" id="results-title">Resultados da Busca</h3>
+            <div id="results-container" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                <!-- Resultados serão injetados aqui -->
+            </div>
+            <div id="loading-indicator" class="text-center py-10 hidden">
+                <p class="text-xl text-gray-400">Carregando...</p>
+            </div>
+             <div id="error-message" class="text-center py-10 hidden">
+                <p class="text-xl text-red-500"></p>
             </div>
         </section>
 
-        <section class="results-section">
-            <div class="top-ad" id="top-ad"></div>
-            <div id="results-container"></div>
-            <div class="bottom-ad" id="bottom-ad"></div>
+        <section id="popular-section" class="mb-16">
+            <a id="popular"></a> <!-- Anchor for navigation -->
+            <h3 class="text-3xl font-semibold mb-8 font-poppins">Populares / Sugeridos</h3>
+            <div id="popular-videos-container" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                <!-- Vídeos populares/sugeridos serão injetados aqui -->
+            </div>
+            <div id="popular-loading-indicator" class="text-center py-10 hidden">
+                <p class="text-xl text-gray-400">Carregando populares...</p>
+            </div>
         </section>
 
-        <div id="loading" class="loading-spinner">
-            <div class="spinner"></div>
-        </div>
+        <div id="ad-body-bottom" class="my-6 ad-placeholder"></div>
     </main>
 
-    <footer>
-        <p>&copy; 2025 TubeDownloader - Todos os direitos reservados</p>
-        <p><a href="admin.html">Área Administrativa</a></p>
+    <footer class="bg-gray-900 text-gray-400 py-8 px-4 md:px-8 text-center">
+        <div id="ad-footer" class="mb-4 ad-placeholder"></div>
+        <p>© <span id="current-year"></span> Candlestine Play Music. Todos os direitos reservados.</p>
+        <p class="text-sm">Plataforma desenvolvida para fins educacionais e de demonstração.</p>
     </footer>
 
+    <!-- Modal para Anúncios -->
+    <div id="ad-modal" class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 hidden p-4">
+        <div class="bg-gray-800 p-5 rounded-lg shadow-xl max-w-lg w-full relative">
+            <button id="close-modal-ad" class="absolute top-2 right-3 text-white text-2xl hover:text-red-500">×</button>
+            <div id="ad-modal-content" class="ad-placeholder">
+                <!-- Conteúdo do anúncio modal -->
+            </div>
+        </div>
+    </div>
+    
     <script src="script.js"></script>
 </body>
 </html>

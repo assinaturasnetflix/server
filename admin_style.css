@@ -1,0 +1,45 @@
+/* TailwindCSS já está incluído via CDN no HTML, este arquivo é para customizações do admin */
+body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* Melhorar contraste de placeholders em campos escuros */
+input::placeholder, textarea::placeholder {
+    color: #9ca3af; /* gray-400 */
+}
+
+.bg-gray-750 { /* Um tom entre gray-700 e gray-800 para cabeçalhos de tabela */
+    background-color: #374151; /* gray-700 */
+}
+@media (prefers-color-scheme: dark) {
+    .bg-gray-750 {
+        background-color: #2d3748; /* Um pouco mais escuro se necessário */
+    }
+}
+
+/* Custom scrollbar para admin (opcional) */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+::-webkit-scrollbar-track {
+    background: #111827; /* gray-900 */
+}
+::-webkit-scrollbar-thumb {
+    background: #374151; /* gray-700 */
+    border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #ef4444; /* red-500 */
+}
+
+/* Estilo para URL/Código encurtado na tabela */
+.url-preview {
+    max-width: 150px; /* Ajuste conforme necessário */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: inline-block; /* Necessário para text-overflow funcionar */
+    vertical-align: middle; /* Alinhar com botões */
+}

@@ -1,291 +1,233 @@
 document.addEventListener('DOMContentLoaded', () => {
-    const searchInput = document.getElementById('search-input');
-    const searchButton = document.getElementById('search-button');
+    const searchForm = document.getElementById('search-form');
+    const searchQueryInput = document.getElementById('search-query');
     const resultsContainer = document.getElementById('results-container');
-    const loading = document.getElementById('loading');
+    const resultsTitle = document.getElementById('results-title');
+    const loadingIndicator = document.getElementById('loading-indicator');
+    const errorMessageDiv = document.getElementById('error-message');
+    
+    const popularVideosContainer = document.getElementById('popular-videos-container');
+    const popularLoadingIndicator = document.getElementById('popular-loading-indicator');
+
+    document.getElementById('current-year').textContent = new Date().getFullYear();
+
+    // --- Ad Management ---
+    const adPlaceholders = {
+        footer: document.getElementById('ad-footer'),
+        modal: document.getElementById('ad-modal-content'),
+        body_top: document.getElementById('ad-body-top'),
+        body_bottom: document.getElementById('ad-body-bottom')
+    };
     const adModal = document.getElementById('ad-modal');
-    const adDisplay = document.getElementById('ad-display');
-    const closeAdButton = document.getElementById('close-ad');
-    const headerAd = document.getElementById('header-ad');
-    const topAd = document.getElementById('top-ad');
-    const bottomAd = document.getElementById('bottom-ad');
+    const closeModalAdButton = document.getElementById('close-modal-ad');
 
-    // Carregar anúncios quando a página for carregada
-    loadAds();
+    if (closeModalAdButton) {
+        closeModalAdButton.addEventListener('click', () => {
+            adModal.classList.add('hidden');
+            recordAdEvent(adModal.dataset.adId, 'close'); // or don't record close
+        });
+    }
 
-    // Configurar evento de busca
-    searchButton.addEventListener('click', performSearch);
-    searchInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') {
-            performSearch();
-        }
-    });
-
-    // Função para buscar vídeos
-    async function performSearch() {
-        const query = searchInput.value.trim();
-        if (query === '') return;
-
-        // Mostrar carregamento
-        loading.style.display = 'flex';
-        resultsContainer.innerHTML = '';
-
+    async function recordAdEvent(adId, type) {
+        if (!adId) return;
         try {
-            const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
-            const data = await response.json();
-
-            // Esconder carregamento
-            loading.style.display = 'none';
-
-            if (data.length === 0) {
-                resultsContainer.innerHTML = '<p class="no-results">Nenhum resultado encontrado.</p>';
-                return;
-            }
-
-            // Mostrar resultados
-            displayResults(data);
+            await fetch('/api/stats/record', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ adId, type }) // type can be 'view' or 'click'
+            });
         } catch (error) {
-            loading.style.display = 'none';
-            resultsContainer.innerHTML = '<p class="error">Ocorreu um erro ao buscar. Tente novamente.</p>';
-            console.error('Erro na busca:', error);
+            console.error('Failed to record ad event:', error);
         }
     }
 
-    // Função para exibir resultados
-    function displayResults(results) {
-        resultsContainer.innerHTML = '';
+    function displayAd(adData, placeholderElement) {
+        if (!adData || !placeholderElement) return;
 
-        results.forEach((result, index) => {
-            // Inserir anúncios entre os resultados (a cada 3 itens)
-            if (index > 0 && index % 3 === 0) {
-                const adCard = document.createElement('div');
-                adCard.className = 'result-card ad-card';
-                adCard.innerHTML = '<div class="ad-result" id="ad-result-' + index + '"></div>';
-                resultsContainer.appendChild(adCard);
-                loadSpecificAd('ad-result-' + index, 'results');
+        placeholderElement.innerHTML = ''; // Clear previous ad
+        placeholderElement.dataset.adId = adData._id; // Store ad ID for click tracking
+
+        let adContent = '';
+        if (adData.type === 'image') {
+            adContent = `<a href="${adData.url}" target="_blank" data-ad-id="${adData._id}" class="ad-link"><img src="${adData.url}" alt="${adData.title}" class="max-w-full h-auto rounded"></a>`;
+        } else if (adData.type === 'gif') {
+            adContent = `<a href="#" data-ad-id="${adData._id}" class="ad-link"><img src="${adData.url}" alt="${adData.title}" class="max-w-full h-auto rounded"></a>`; // GIF might not have a link, or you can make it clickable
+        } else if (adData.type === 'video') {
+            adContent = `<video controls src="${adData.url}" class="max-w-full rounded"></video>`;
+        } else if (adData.type === 'iframe') {
+            // Sanitize iframe content slightly - ensure it's an embed URL or known safe source
+            // For YouTube embeds, ensure `src` is like `https://www.youtube.com/embed/...`
+            if (adData.url.includes("<iframe")) { // if full iframe tag is provided
+                 adContent = adData.url;
+            } else { // if only src is provided
+                 adContent = `<iframe src="${adData.url}" frameborder="0" allowfullscreen class="w-full h-64 rounded"></iframe>`;
             }
+        }
+        
+        const adWarning = `<p class="ad-warning">Este é um anúncio.</p>`;
+        placeholderElement.innerHTML = adContent + adWarning;
 
-            const resultCard = document.createElement('div');
-            resultCard.className = 'result-card';
-            resultCard.innerHTML = `
-                <img class="result-thumbnail" src="${result.thumbnail}" alt="${result.title}">
-                <div class="result-info">
-                    <h3 class="result-title">${result.title}</h3>
-                    <div class="result-buttons">
-                        <button class="download-button mp3-button" data-id="${result.videoId}" data-format="mp3">MP3</button>
-                        <button class="download-button mp4-button" data-id="${result.videoId}" data-format="mp4">MP4</button>
+        // Record view
+        recordAdEvent(adData._id, 'view');
+
+        // Add click listener for non-iframe ads with links
+        const adLink = placeholderElement.querySelector('.ad-link');
+        if (adLink) {
+            adLink.addEventListener('click', (e) => {
+                // Don't prevent default for actual links, just record click
+                recordAdEvent(adLink.dataset.adId, 'click');
+            });
+        }
+         // For iframes, clicks inside are harder to track without postMessage API
+         // For video elements, one might track 'play' events as a form of engagement.
+    }
+
+    async function fetchAndDisplayAds() {
+        for (const position in adPlaceholders) {
+            if (adPlaceholders[position]) {
+                try {
+                    const response = await fetch(`/api/ads/serve?position=${position}`);
+                    if (response.ok) {
+                        const adData = await response.json();
+                        if (adData && adData._id) { // Check if an ad was returned
+                           if (position === 'modal') {
+                                displayAd(adData, adPlaceholders.modal);
+                                adModal.classList.remove('hidden');
+                                adModal.dataset.adId = adData._id; // For close event
+                            } else {
+                                displayAd(adData, adPlaceholders[position]);
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error(`Failed to load ad for ${position}:`, error);
+                }
+            }
+        }
+    }
+    // --- End Ad Management ---
+
+    function showLoading(isLoading, popular = false) {
+        const loader = popular ? popularLoadingIndicator : loadingIndicator;
+        if (isLoading) {
+            loader.classList.remove('hidden');
+            if (!popular) {
+                resultsContainer.innerHTML = '';
+                resultsTitle.classList.add('sr-only');
+                errorMessageDiv.classList.add('hidden');
+            } else {
+                popularVideosContainer.innerHTML = '';
+            }
+        } else {
+            loader.classList.add('hidden');
+        }
+    }
+    
+    function showError(message) {
+        errorMessageDiv.classList.remove('hidden');
+        errorMessageDiv.querySelector('p').textContent = message;
+        resultsContainer.innerHTML = '';
+        resultsTitle.classList.add('sr-only');
+    }
+
+    function displayResults(videos, container, isPopular = false) {
+        container.innerHTML = ''; // Clear previous results or loading
+        if (videos.length === 0) {
+            container.innerHTML = `<p class="col-span-full text-center text-gray-400">Nenhum vídeo encontrado.</p>`;
+            if (!isPopular) resultsTitle.classList.add('sr-only');
+            return;
+        }
+
+        if (!isPopular) resultsTitle.classList.remove('sr-only');
+
+        videos.forEach(video => {
+            const videoId = video.id.videoId || video.id; // Search result vs direct video object
+            const title = video.snippet.title;
+            const thumbnailUrl = video.snippet.thumbnails.medium.url; // Or high for better quality
+
+            const card = `
+                <div class="video-card bg-gray-800 rounded-lg shadow-lg overflow-hidden flex flex-col">
+                    <img src="${thumbnailUrl}" alt="${title}" class="w-full h-48 object-cover">
+                    <div class="p-4 flex flex-col flex-grow">
+                        <h4 class="text-md font-semibold mb-2 h-16 overflow-hidden">${title}</h4>
+                        <div class="mt-auto flex space-x-2">
+                            <button onclick="navigateToDownload('${videoId}', 'mp3', '${encodeURIComponent(title)}', '${encodeURIComponent(thumbnailUrl)}')"
+                                    class="flex-1 bg-red-600 hover:bg-red-700 text-white text-sm py-2 px-3 rounded transition duration-150">
+                                Baixar MP3
+                            </button>
+                            <button onclick="navigateToDownload('${videoId}', 'mp4', '${encodeURIComponent(title)}', '${encodeURIComponent(thumbnailUrl)}')"
+                                    class="flex-1 bg-gray-600 hover:bg-gray-700 text-white text-sm py-2 px-3 rounded transition duration-150">
+                                Baixar MP4
+                            </button>
+                        </div>
                     </div>
                 </div>
             `;
-            resultsContainer.appendChild(resultCard);
-        });
-
-        // Adicionar eventos aos botões de download
-        document.querySelectorAll('.download-button').forEach(button => {
-            button.addEventListener('click', initiateDownload);
+            container.innerHTML += card;
         });
     }
+    
+    // Make navigateToDownload globally accessible
+    window.navigateToDownload = (videoId, format, title, thumbnailUrl) => {
+        const url = `download.html?videoId=${videoId}&format=${format}&title=${title}&thumbnail=${thumbnailUrl}`;
+        window.location.href = url;
+    };
 
-    // Função para iniciar processo de download
-    async function initiateDownload(e) {
-        const videoId = e.target.getAttribute('data-id');
-        const format = e.target.getAttribute('data-format');
-        
-        // Registrar clique no botão de download
-        await fetch('/api/stats/download-click', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ videoId, format })
-        });
-
-        // Mostrar anúncio antes do download
-        showAdBeforeDownload(videoId, format);
-    }
-
-    // Função para mostrar anúncio antes do download
-    async function showAdBeforeDownload(videoId, format) {
-        try {
-            // Buscar anúncio para página de download
-            const response = await fetch('/api/ads/random?page=download');
-            const ad = await response.json();
-
-            if (ad && ad.id) {
-                // Mostrar o anúncio
-                adDisplay.innerHTML = '';
-
-                // Registrar visualização do anúncio
-                await fetch('/api/stats/ad-view', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ adId: ad.id })
-                });
-
-                // Diferentes formatos de anúncio
-                if (ad.type === 'iframe') {
-                    const iframe = document.createElement('iframe');
-                    iframe.src = ad.content;
-                    iframe.width = '100%';
-                    iframe.height = '300px';
-                    iframe.frameBorder = '0';
-                    adDisplay.appendChild(iframe);
-                } else if (ad.type === 'video') {
-                    const video = document.createElement('video');
-                    video.src = ad.content;
-                    video.controls = true;
-                    video.autoplay = true;
-                    video.muted = false;
-                    adDisplay.appendChild(video);
-                } else {
-                    // Imagem ou GIF
-                    const link = document.createElement('a');
-                    link.href = ad.link || '#';
-                    link.target = '_blank';
-                    link.onclick = async () => {
-                        // Registrar clique no anúncio
-                        await fetch('/api/stats/ad-click', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json'
-                            },
-                            body: JSON.stringify({ adId: ad.id })
-                        });
-                    };
-                    
-                    const img = document.createElement('img');
-                    img.src = ad.content;
-                    img.alt = 'Anúncio';
-                    
-                    link.appendChild(img);
-                    adDisplay.appendChild(link);
-                }
-
-                // Mostrar o modal de anúncio
-                adModal.style.display = 'flex';
-
-                // Configurar botão de fechar com contador
-                closeAdButton.disabled = true;
-                let countdown = 5;
-                closeAdButton.textContent = `Fechar [${countdown}s]`;
-                
-                const countdownInterval = setInterval(() => {
-                    countdown--;
-                    closeAdButton.textContent = `Fechar [${countdown}s]`;
-                    
-                    if (countdown <= 0) {
-                        clearInterval(countdownInterval);
-                        closeAdButton.disabled = false;
-                        closeAdButton.textContent = 'Fechar';
-                    }
-                }, 1000);
-
-                // Limpar o intervalo se o anúncio for fechado
-                closeAdButton.onclick = () => {
-                    adModal.style.display = 'none';
-                    clearInterval(countdownInterval);
-                    startDownload(videoId, format);
-                };
-            } else {
-                // Se não encontrar anúncio, inicia o download diretamente
-                startDownload(videoId, format);
+    if (searchForm) {
+        searchForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const query = searchQueryInput.value.trim();
+            if (!query) {
+                showError("Por favor, insira um termo de busca.");
+                return;
             }
-        } catch (error) {
-            console.error('Erro ao carregar anúncio:', error);
-            startDownload(videoId, format);
-        }
-    }
-
-    // Função para iniciar o download propriamente dito
-    function startDownload(videoId, format) {
-        const downloadUrl = `/api/download?id=${videoId}&format=${format}`;
-        window.location.href = downloadUrl;
-    }
-
-    // Funções para gerenciar os anúncios
-    async function loadAds() {
-        try {
-            // Carregar anúncio do cabeçalho
-            loadSpecificAd('header-ad', 'home');
             
-            // Carregar anúncios acima e abaixo dos resultados
-            loadSpecificAd('top-ad', 'home');
-            loadSpecificAd('bottom-ad', 'home');
-        } catch (error) {
-            console.error('Erro ao carregar anúncios:', error);
-        }
-    }
+            showLoading(true);
+            resultsContainer.innerHTML = ''; // Clear previous results
 
-    async function loadSpecificAd(containerId, page) {
-        try {
-            const response = await fetch(`/api/ads/random?page=${page}`);
-            const ad = await response.json();
-            const container = document.getElementById(containerId);
-
-            if (ad && ad.id && container) {
-                container.innerHTML = '';
-
-                // Registrar visualização do anúncio
-                await fetch('/api/stats/ad-view', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ adId: ad.id })
-                });
-
-                // Criar elemento com base no tipo de anúncio
-                if (ad.type === 'iframe') {
-                    const iframe = document.createElement('iframe');
-                    iframe.src = ad.content;
-                    iframe.width = '100%';
-                    iframe.height = '100%';
-                    iframe.frameBorder = '0';
-                    container.appendChild(iframe);
-                } else if (ad.type === 'video') {
-                    const video = document.createElement('video');
-                    video.src = ad.content;
-                    video.controls = true;
-                    video.autoplay = true;
-                    video.muted = true;
-                    video.style.width = '100%';
-                    video.style.height = '100%';
-                    video.style.objectFit = 'cover';
-                    container.appendChild(video);
-                } else {
-                    // Imagem ou GIF
-                    const link = document.createElement('a');
-                    link.href = ad.link || '#';
-                    link.target = '_blank';
-                    link.style.display = 'block';
-                    link.style.width = '100%';
-                    link.style.height = '100%';
-                    link.onclick = async () => {
-                        // Registrar clique no anúncio
-                        await fetch('/api/stats/ad-click', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json'
-                            },
-                            body: JSON.stringify({ adId: ad.id })
-                        });
-                    };
-                    
-                    const img = document.createElement('img');
-                    img.src = ad.content;
-                    img.alt = 'Anúncio';
-                    img.style.width = '100%';
-                    img.style.height = '100%';
-                    img.style.objectFit = 'cover';
-                    
-                    link.appendChild(img);
-                    container.appendChild(link);
+            try {
+                const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || `Erro ${response.status} na busca.`);
                 }
+                const items = await response.json();
+                displayResults(items, resultsContainer);
+            } catch (error) {
+                console.error('Search error:', error);
+                showError(error.message || 'Falha ao buscar vídeos. Tente novamente.');
+            } finally {
+                showLoading(false);
             }
+        });
+    }
+
+    async function fetchPopularVideos() {
+        if (!popularVideosContainer) return;
+        showLoading(true, true);
+        try {
+            const response = await fetch('/api/popular');
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || `Erro ${response.status} ao buscar populares.`);
+            }
+            const items = await response.json();
+            displayResults(items, popularVideosContainer, true);
         } catch (error) {
-            console.error('Erro ao carregar anúncio específico:', error);
+            console.error('Popular videos error:', error);
+            popularVideosContainer.innerHTML = `<p class="col-span-full text-center text-red-400">Não foi possível carregar vídeos populares.</p>`;
+        } finally {
+            showLoading(false, true);
         }
     }
+
+    // Initial actions
+    fetchPopularVideos();
+    fetchAndDisplayAds(); // Load ads on page load
+    // Potentially show a modal ad after a delay or user interaction
+    // setTimeout(() => {
+    //     if (adModal && adModal.classList.contains('hidden') && adPlaceholders.modal.innerHTML.trim() !== '') {
+    //         adModal.classList.remove('hidden');
+    //     }
+    // }, 5000); // Example: show modal ad after 5 seconds if not already shown
 });
