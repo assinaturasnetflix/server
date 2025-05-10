@@ -3,7 +3,8 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const axios = require('axios');
-const ytdl = require('ytdl-core');
+// const ytdl = require('ytdl-core'); // Removido - não será mais usado
+const { spawn } = require('child_process'); // Adicionado para yt-dlp
 const path = require('path');
 
 const app = express();
@@ -49,7 +50,7 @@ const VideoLog = mongoose.model('VideoLog', VideoLogSchema);
 
 // --- API Routes ---
 
-// YouTube Search
+// Youtube
 app.get('/api/search', async (req, res) => {
     const query = req.query.q;
     if (!query) {
@@ -75,12 +76,10 @@ app.get('/api/search', async (req, res) => {
 // Get popular/suggested videos (example: music chart or hardcoded)
 app.get('/api/popular', async (req, res) => {
     try {
-        // For a real app, you might fetch a chart, or use YouTube API for trending music
-        // Here's a simplified example using a search for "top moçambique music"
         const response = await axios.get('https://www.googleapis.com/youtube/v3/search', {
             params: {
                 part: 'snippet',
-                q: 'música popular moçambique 2024', // Example query
+                q: 'música popular moçambique 2025', // Example query, updated year
                 key: YOUTUBE_API_KEY,
                 maxResults: 5,
                 type: 'video',
@@ -95,7 +94,7 @@ app.get('/api/popular', async (req, res) => {
 });
 
 
-// Generate Download Link
+// Generate Download Link using yt-dlp
 app.get('/api/download', async (req, res) => {
     const videoId = req.query.videoId;
     const format = req.query.format; // 'mp3' or 'mp4'
@@ -107,40 +106,121 @@ app.get('/api/download', async (req, res) => {
         return res.status(400).json({ error: 'format (mp3 or mp4) is required' });
     }
 
+    // Use standard YouTube URL for yt-dlp
     const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
 
     try {
-        const info = await ytdl.getInfo(videoUrl);
-        const videoTitle = info.videoDetails.title.replace(/[^\x00-\x7F]/g, ""); // Sanitize title
+        const getYtDlpPath = () => {
+            return process.env.YT_DLP_PATH || 'yt-dlp';
+        };
+        
+        const ytDlpPath = getYtDlpPath();
+        let videoTitle = videoId; // Fallback title
 
-        // Log the download request
+        // Etapa 1: Obter informações do vídeo (título)
+        const infoArgs = ['--get-title', '-o', '%(title)s', videoUrl];
+        const infoProcess = spawn(ytDlpPath, infoArgs);
+        
+        let titleData = '';
+        let titleErrorData = '';
+
+        infoProcess.stdout.on('data', (data) => {
+            titleData += data.toString();
+        });
+        infoProcess.stderr.on('data', (data) => {
+            titleErrorData += data.toString();
+        });
+
+        const titleExitCode = await new Promise((resolve) => {
+            infoProcess.on('close', resolve);
+        });
+
+        if (titleExitCode === 0 && titleData.trim() !== '') {
+            videoTitle = titleData.trim().replace(/[^\x00-\x7F]/g, "").replace(/[\\/:*?"<>|]/g, '_'); // Sanitize title for filename
+        } else {
+            console.warn(`yt-dlp (get-title) for ${videoId} failed or returned empty. Stderr: ${titleErrorData}`);
+            // Usaremos o videoId como fallback para o nome do arquivo se o título não puder ser obtido
+        }
+
+        // Log da solicitação de download
         const newLog = new VideoLog({ youtubeId: videoId, title: videoTitle, format });
         await newLog.save();
 
-        let options = {};
+        let ytDlpDownloadArgs = [];
         let contentType = '';
         let filename = '';
 
         if (format === 'mp3') {
-            options = { quality: 'highestaudio', filter: 'audioonly' };
+            ytDlpDownloadArgs = [
+                '-f', 'bestaudio[ext=m4a]/bestaudio',
+                '--extract-audio',
+                '--audio-format', 'mp3',
+                '--audio-quality', '0', // 0 for VBR best, or 128K, 192K, etc.
+                videoUrl,
+                '-o', '-' // Output to stdout
+            ];
             contentType = 'audio/mpeg';
             filename = `${videoTitle}.mp3`;
         } else { // mp4
-            options = { quality: 'highestvideo', filter: 'videoandaudio' }; // or choose specific itag
+            ytDlpDownloadArgs = [
+                // Tenta obter vídeo mp4 e áudio m4a, depois melhor mp4 geral, depois melhor geral.
+                // Adicionado --embed-thumbnail para incluir a miniatura no MP4 se possível
+                '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                '--embed-thumbnail', // Tenta embutir a thumbnail no vídeo
+                videoUrl,
+                '-o', '-' // Output to stdout
+            ];
             contentType = 'video/mp4';
             filename = `${videoTitle}.mp4`;
         }
         
-        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`); // Encode filename
         res.setHeader('Content-Type', contentType);
         
-        ytdl(videoUrl, options).pipe(res);
+        console.log(`Attempting download for ${videoId} as ${format} with filename: ${filename}`);
+        console.log(`Executing: ${ytDlpPath} ${ytDlpDownloadArgs.join(' ')}`);
+
+        const ytDlpDownloadProcess = spawn(ytDlpPath, ytDlpDownloadArgs);
+
+        ytDlpDownloadProcess.stdout.pipe(res);
+
+        ytDlpDownloadProcess.stderr.on('data', (data) => {
+            console.error(`yt-dlp stderr (${videoId} ${format}): ${data}`);
+        });
+
+        ytDlpDownloadProcess.on('error', (error) => {
+            console.error(`Failed to start yt-dlp download process for ${videoId} ${format}.`, error);
+            if (!res.headersSent) {
+                 res.status(500).json({ error: 'Failed to start download process', details: error.message });
+            } else if (res.writableEnded === false) {
+                res.end(); // Tenta finalizar a resposta se um erro ocorrer após o início do stream
+            }
+        });
+        
+        ytDlpDownloadProcess.on('close', (code) => {
+            console.log(`yt-dlp download process for ${videoId} ${format} exited with code ${code}`);
+            if (code !== 0) {
+                if (!res.headersSent) {
+                    res.status(500).json({ error: 'Download process failed', details: `yt-dlp exited with code ${code}` });
+                } else if (res.writableEnded === false) {
+                    console.error(`yt-dlp exited with code ${code} after headers sent. Stream might be incomplete.`);
+                    res.end(); // Garante que a resposta seja finalizada
+                }
+            } else {
+                 if (res.writableEnded === false) {
+                    res.end(); // Garante que a resposta seja finalizada em caso de sucesso também
+                }
+            }
+        });
 
     } catch (error) {
-        console.error('ytdl Error:', error);
-        res.status(500).json({ error: 'Failed to process video for download', details: error.message });
+        console.error(`Error in /api/download for ${videoId} ${format}:`, error);
+        if (!res.headersSent) {
+            res.status(500).json({ error: 'Failed to process video for download', details: error.message });
+        }
     }
 });
+
 
 // --- Ad Management API ---
 // Create Ad
@@ -173,12 +253,11 @@ app.get('/api/ads/serve', async (req, res) => {
             query.position = position;
         }
         const ads = await Ad.find(query);
-        // If multiple ads for a position, pick one randomly or by priority
         if (ads.length > 0 && position) {
             const randomAd = ads[Math.floor(Math.random() * ads.length)];
             return res.json(randomAd);
         }
-        res.json(ads); // Or return all active if no specific position
+        res.json(ads); 
     } catch (error) {
         res.status(500).json({ error: 'Failed to fetch active ads', details: error.message });
     }
@@ -201,7 +280,6 @@ app.delete('/api/ads/:id', async (req, res) => {
     try {
         const deletedAd = await Ad.findByIdAndDelete(req.params.id);
         if (!deletedAd) return res.status(404).json({ error: 'Ad not found' });
-        // Optionally delete associated stats
         await Stat.deleteMany({ adId: req.params.id });
         res.json({ message: 'Ad deleted successfully' });
     } catch (error) {
@@ -212,7 +290,7 @@ app.delete('/api/ads/:id', async (req, res) => {
 // --- Statistics API ---
 // Record Ad Event (View or Click)
 app.post('/api/stats/record', async (req, res) => {
-    const { adId, type } = req.body; // type: 'view' or 'click'
+    const { adId, type } = req.body; 
     if (!adId || !type) {
         return res.status(400).json({ error: 'adId and type (view/click) are required' });
     }
@@ -231,17 +309,17 @@ app.post('/api/stats/record', async (req, res) => {
 // Get Stats (for admin)
 app.get('/api/stats', async (req, res) => {
     try {
-        const allStats = await Stat.find().populate('adId', 'title'); // Populate ad title
+        const allStats = await Stat.find().populate('adId', 'title'); 
         
-        // Aggregate stats per ad
         const adStats = {};
         for (const stat of allStats) {
-            if (!stat.adId) continue; // Skip if ad was deleted and not populated
+            if (!stat.adId) continue; 
             const adIdStr = stat.adId._id.toString();
             if (!adStats[adIdStr]) {
+                const adDetails = await Ad.findById(adIdStr).select('status title').lean(); // Use lean for plain object
                 adStats[adIdStr] = {
-                    adTitle: stat.adId.title,
-                    adStatus: (await Ad.findById(adIdStr))?.status || 'deleted',
+                    adTitle: stat.adId.title, // from populate
+                    adStatus: adDetails ? adDetails.status : 'deleted',
                     views: 0,
                     clicks: 0,
                     ctr: 0
@@ -251,10 +329,9 @@ app.get('/api/stats', async (req, res) => {
             if (stat.type === 'click') adStats[adIdStr].clicks++;
         }
 
-        // Calculate CTR
         for (const adIdStr in adStats) {
             if (adStats[adIdStr].views > 0) {
-                adStats[adIdStr].ctr = (adStats[adIdStr].clicks / adStats[adIdStr].views) * 100;
+                adStats[adIdStr].ctr = parseFloat(((adStats[adIdStr].clicks / adStats[adIdStr].views) * 100).toFixed(2));
             }
         }
         res.json(Object.values(adStats));
@@ -264,15 +341,14 @@ app.get('/api/stats', async (req, res) => {
     }
 });
 
-// Serve frontend files (SPA-like, catch-all for client-side routing if needed)
-// index.html should be the main entry
+// Serve frontend files
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 app.get('/download.html', (req, res) => {
     res.sendFile(path.join(__dirname, 'download.html'));
 });
-app.get('/admin.html', (req, res) => { // Basic auth could be added here
+app.get('/admin.html', (req, res) => { 
     res.sendFile(path.join(__dirname, 'admin.html'));
 });
 
